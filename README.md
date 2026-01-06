@@ -367,7 +367,7 @@ docker exec vpro-plex-provider python vpro_cinema_scraper.py "Downfall" --year 2
 
 ## Updating
 
-To update to the latest version:
+To update to the latest version (assuming you are in the folder where you initially ran `git clone ...`):
 
 ```bash
 # 1. Pull the latest changes
@@ -381,6 +381,12 @@ docker-compose build --no-cache
 
 # 4. Start the updated container
 docker-compose up -d
+```
+
+#### Or, alternatively, in one go:
+
+```bash
+git pull && docker-compose down && docker-compose build --no-cache && docker-compose up -d
 ```
 
 ### Verify the update
