@@ -32,7 +32,7 @@ A custom metadata provider that supplies Dutch film descriptions from VPRO Cinem
 ### 1. Clone and configure
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/vpro-cinema-plex.git
+git clone https://github.com/c-kick/vpro-cinema-plex.git
 cd vpro-cinema-plex
 
 # Copy and edit environment file
