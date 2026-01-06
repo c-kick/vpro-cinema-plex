@@ -793,14 +793,13 @@ def _title_similarity(title1: str, title2: str) -> float:
 # Core Search Functions
 # =============================================================================
 
-def _search_vpro_single_title(
+def _search_poms_api(
     title: str,
     year: Optional[int] = None,
     director: Optional[str] = None,
 ) -> Optional[VPROFilm]:
-    """Search VPRO for a single title using POMS API with web fallback."""
-    
-    # Strategy 1: POMS API
+    """Search VPRO for a single title using POMS API only."""
+
     try:
         poms = POMSAPIClient(timeout=30)
         items = poms.search(title, max_results=10)
@@ -846,32 +845,40 @@ def _search_vpro_single_title(
             
     except Exception as e:
         logger.error(f"POMS API error: {e}")
-    
-    # Strategy 2: Web search fallback
+
+    return None
+
+
+def _search_web_fallback(
+    title: str,
+    year: Optional[int] = None,
+) -> Optional[VPROFilm]:
+    """Search VPRO using web search engines (DuckDuckGo, Startpage)."""
+
     logger.info(f"Trying web search fallback for '{title}'...")
-    
+
     try:
         searcher = WebSearcher(timeout=15)
         urls = searcher.search(title, year)
-        
+
         if urls:
             logger.info(f"Web search found {len(urls)} URLs for '{title}'")
             scraper = VPROPageScraper(timeout=15)
-            
+
             for url in urls:
                 film = scraper.scrape(url)
                 if film and film.description:
                     if year and film.year and abs(film.year - year) > 2:
                         continue
-                    
+
                     logger.info(f"Web fallback: Found - {film.title} ({film.year})")
                     return film
         else:
             logger.info(f"Web search: No URLs found for '{title}'")
-            
+
     except Exception as e:
         logger.error(f"Web search error: {e}")
-    
+
     return None
 
 
@@ -884,49 +891,54 @@ def get_vpro_description(
 ) -> Optional[VPROFilm]:
     """
     Search VPRO Cinema for a film and return its Dutch description.
-    
+
     Search Strategy:
-        1. Search with original title (POMS API + web fallback)
-        2. If no match AND have IMDB ID: fetch alternate titles from TMDB
-        3. Try each alternate title until match found
-    
+        1. Search with original title via POMS API
+        2. If no match AND have IMDB ID: try alternate titles from TMDB
+        3. Web search fallback (DuckDuckGo, Startpage)
+
     Args:
         title: Film title to search for
         year: Release year (improves matching)
         imdb_id: IMDB ID (enables alternate title lookup)
         director: Director name (for disambiguation)
         verbose: Enable verbose logging
-    
+
     Returns:
         VPROFilm object if found, None otherwise
     """
     if verbose:
         logging.basicConfig(level=logging.DEBUG)
-    
+
     logger.info(f"Searching VPRO: '{title}' ({year})" + (f" [{imdb_id}]" if imdb_id else ""))
-    
-    # Step 1: Try original title
-    result = _search_vpro_single_title(title, year, director)
+
+    # Step 1: Try original title via POMS API
+    result = _search_poms_api(title, year, director)
     if result:
         return result
-    
-    # Step 2: Try alternate titles via TMDB
+
+    # Step 2: Try alternate titles via TMDB (if IMDB ID provided)
     if imdb_id:
-        logger.info(f"No match for '{title}' - fetching alternate titles from TMDB...")
-        
+        logger.info(f"No POMS match for '{title}' - fetching alternate titles from TMDB...")
+
         tmdb = TMDBClient()
         alt_titles = tmdb.get_alternate_titles(imdb_id)
-        
+
         alt_titles = [t for t in alt_titles if not _titles_match(t, title)]
-        
+
         for alt_title in alt_titles[:5]:
             logger.info(f"Trying alternate title: '{alt_title}'")
-            
-            result = _search_vpro_single_title(alt_title, year, director)
+
+            result = _search_poms_api(alt_title, year, director)
             if result:
                 logger.info(f"Found via alternate title '{alt_title}': {result.title}")
                 return result
-    
+
+    # Step 3: Web search fallback
+    result = _search_web_fallback(title, year)
+    if result:
+        return result
+
     logger.info(f"No VPRO Cinema entry found for '{title}' ({year})")
     return None
 
