@@ -16,7 +16,7 @@ COPY vpro_cinema_scraper.py vpro_metadata_provider.py ./
 ENV PORT=5100
 ENV LOG_LEVEL=INFO
 ENV CACHE_DIR=/app/cache
-ENV VPRO_CREDENTIALS_FILE=/app/cache/credentials.json
+ENV POMS_CACHE_FILE=/app/cache/credentials.json
 # TMDB_API_KEY should be set via docker-compose or .env
 
 EXPOSE 5100

@@ -18,7 +18,7 @@ Credential Management:
 
 Environment Variables:
     TMDB_API_KEY: API key for TMDB alternate titles lookup (optional but recommended)
-    VPRO_CREDENTIALS_FILE: Path to credentials cache (default: ./credentials.json)
+    POMS_CACHE_FILE: Path to POMS credentials cache (default: ./credentials.json)
 
 Usage:
     from vpro_cinema_scraper import get_vpro_description
@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 TMDB_API_KEY = os.environ.get("TMDB_API_KEY", "")
-CREDENTIALS_FILE = os.environ.get("VPRO_CREDENTIALS_FILE", "./credentials.json")
+POMS_CACHE_FILE = os.environ.get("POMS_CACHE_FILE", "./credentials.json")
 
 # Hardcoded fallback credentials (from vprogids.nl as of Jan 2026)
 DEFAULT_API_KEY = "ione7ahfij"
@@ -123,7 +123,7 @@ class CredentialManager:
     ]
     
     def __init__(self, cache_file: str = None):
-        self.cache_file = cache_file or CREDENTIALS_FILE
+        self.cache_file = cache_file or POMS_CACHE_FILE
         self._api_key: Optional[str] = None
         self._api_secret: Optional[str] = None
         self._load_cached()
