@@ -13,7 +13,7 @@ A custom metadata provider that supplies Dutch film descriptions from [VPRO Cine
 
 - 🇳🇱 Dutch film reviews/descriptions from VPRO Cinema's database
 - 🔍 Direct NPO POMS API access with automatic credential refresh
-- 🌍 TMDB alternate title lookup (finds French/Dutch/German titles automatically)
+- 🌍 TMDB alternate title lookup (enables matching movie titles in other languages)
 - 💾 Persistent caching with TTL for not-found entries
 - 🔧 Self-healing: auto-refreshes API credentials if authentication fails
 - 🐳 Docker-ready with health checks
