@@ -405,8 +405,8 @@ def provider_root_tv():
                 {"type": 4, "Scheme": [{"scheme": PROVIDER_IDENTIFIER_TV}]}   # Episodes
             ],
             "Feature": [
-                {"type": "metadata", "key": "/tv/library/metadata"},
-                {"type": "match", "key": "/tv/library/metadata/matches"}
+                {"type": "metadata", "key": "/library/metadata"},
+                {"type": "match", "key": "/library/metadata/matches"}
             ]
         }
     })
