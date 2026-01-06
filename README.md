@@ -1,11 +1,11 @@
 # VPRO Cinema Metadata Provider for Plex
 
+A custom metadata provider that supplies Dutch film descriptions from VPRO Cinema (vprogids.nl) to Plex Media Server.
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/)
 [![Plex 1.40+](https://img.shields.io/badge/Plex-1.40%2B-E5A00D.svg?logo=plex&logoColor=white)](https://www.plex.tv/)
-
-A custom metadata provider that supplies Dutch film descriptions from VPRO Cinema (vprogids.nl) to Plex Media Server.
 
 ## Features
 
@@ -17,6 +17,17 @@ A custom metadata provider that supplies Dutch film descriptions from VPRO Cinem
 - 🐳 Docker-ready with health checks
 - 🔗 Combines with other providers (as it only returns the `description` metadata)
 
+## Background
+
+For years I wanted to automatically pull the excellent Dutch film reviews from VPRO Cinema into Plex. I made several
+attempts over the years, but without an official NPO API, I never got it to work. After getting tired of manually
+copying descriptions into Plex — only to have them overwritten by the next metadata refresh — I teamed up with Claude to
+build a proper solution. After some experimentation (first with scraping, then reverse-engineering the NPO's internal
+POMS API), I finally got a working Plex agent! I decided to share it with the community, hoping it can help others too.
+
+Feel free to use, fork, and contribute, but note that the API is not officially supported by NPO, so it's a bit dodgy 
+and may break at any time.
+
 ## Prerequisites
 
 ### Required
@@ -27,8 +38,10 @@ A custom metadata provider that supplies Dutch film descriptions from VPRO Cinem
 ### Recommended
 
 - **TMDB API Key** — Enables automatic alternate language title lookup
-  
-  Many films are indexed in VPRO Cinema under their original (often French, German, or Dutch) title rather than the English title. Without a TMDB API key, searching for "Downfall" will fail, but with it, the provider automatically discovers and tries "Der Untergang".
+
+  Many films are indexed in VPRO Cinema under their original (often French, German, or Dutch) title rather than the
+  English title. Without a TMDB API key, searching for "Downfall" will fail, but with it, the provider automatically
+  discovers and tries "Der Untergang".
 
   Get your free API key at: https://www.themoviedb.org/settings/api
 
@@ -44,8 +57,10 @@ cd vpro-cinema-plex
 cp env.example .env
 ```
 
-#### Optionally: 
+#### Optionally:
+
 Edit `.env` and add your TMDB API key:
+
 ```bash
 TMDB_API_KEY=your_tmdb_api_key_here
 ```
@@ -84,7 +99,9 @@ curl "http://localhost:5100/test?title=Apocalypse+Now&year=1979"
 9. Lastly, pick "Plex Local Media" from the dropdown and click the **+** button
 10. Click **Save**
 
-Done! The agent is now configured to first search for Dutch movie summaries on VPRO Cinema, and get the rest of the metadata from Plex Movie, falling back to local media. If no summary is found on VPRO Cinema, it falls back to Plex Movie (and then to local media).
+Done! The agent is now configured to first search for Dutch movie summaries on VPRO Cinema, and get the rest of the
+metadata from Plex Movie, falling back to local media. If no summary is found on VPRO Cinema, it falls back to Plex
+Movie (and then to local media).
 
 ### 5. Configure your library
 
@@ -135,7 +152,9 @@ New movies will automatically use the provider on scan.
 
 ### Test searches directly
 
-> **Note:** The CLI scraper (`vpro_cinema_scraper.py`) does not cache results (in `cache/`) — it only searches and returns data. Caching is handled by the HTTP provider (`vpro_metadata_provider.py`). To test with caching, use the HTTP `/library/metadata` endpoints below.
+> **Note:** The CLI scraper (`vpro_cinema_scraper.py`) does not cache results (in `cache/`) — it only searches and
+> returns data. Caching is handled by the HTTP provider (`vpro_metadata_provider.py`). To test with caching, use the HTTP
+`/library/metadata` endpoints below.
 
 ```bash
 # Basic search
@@ -146,6 +165,7 @@ docker exec vpro-plex-provider python vpro_cinema_scraper.py "Downfall" --year 2
 ```
 
 Example output:
+
 ```
 Searching VPRO Cinema for: Downfall (2004)
 ------------------------------------------------------------
@@ -202,7 +222,11 @@ docker exec vpro-plex-provider sh -c 'echo "{\"api_key\":\"bad\",\"api_secret\":
 docker exec vpro-plex-provider python vpro_cinema_scraper.py "The Matrix" --year 1999 -v
 # Should show: "auth failed, refreshing credentials..."
 ```
-> **Note**: the `credentials.json` file is only created after a credential refresh (manual or automatic). If the file doesn't exist, the provider uses built-in default credentials. This is normal — the file will be created automatically if the defaults ever stop working.
+
+> **Note**: the `credentials.json` file is only created after a credential refresh (manual or automatic). If the file
+> doesn't exist, the provider uses built-in default credentials. This is normal — the file will be created automatically
+> if the defaults ever stop working.
+
 ### Cache management
 
 ```bash
@@ -228,27 +252,27 @@ docker logs -f vpro-plex-provider
 
 ## Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | 5100 | Server port |
-| `LOG_LEVEL` | INFO | Logging level (DEBUG, INFO, WARNING, ERROR) |
-| `CACHE_DIR` | ./cache | Cache directory path |
-| `TMDB_API_KEY` | *(none)* | TMDB API key for alternate title lookup (**recommended**) |
-| `POMS_CACHE_FILE` | ./credentials.json | Path to cached POMS credentials |
+| Variable          | Default            | Description                                               |
+|-------------------|--------------------|-----------------------------------------------------------|
+| `PORT`            | 5100               | Server port                                               |
+| `LOG_LEVEL`       | INFO               | Logging level (DEBUG, INFO, WARNING, ERROR)               |
+| `CACHE_DIR`       | ./cache            | Cache directory path                                      |
+| `TMDB_API_KEY`    | *(none)*           | TMDB API key for alternate title lookup (**recommended**) |
+| `POMS_CACHE_FILE` | ./credentials.json | Path to cached POMS credentials                           |
 
 ## API Endpoints
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/` | GET | Provider info (identifier, version, features) |
-| `/health` | GET | Health check with version and config status |
-| `/test` | GET | Test search: `?title=X&year=Y&imdb=ttZ` |
-| `/cache` | GET | List cached entries or view specific: `?key=X` |
-| `/cache/clear` | POST | Clear cached entries (preserves credentials) |
-| `/library/metadata/<key>` | GET | Plex metadata lookup |
-| `/library/metadata/matches` | POST | Plex match endpoint |
-| `/library/metadata/<key>/images` | GET | Returns empty (no artwork) |
-| `/library/metadata/<key>/extras` | GET | Returns empty (no extras) |
+| Endpoint                         | Method | Description                                    |
+|----------------------------------|--------|------------------------------------------------|
+| `/`                              | GET    | Provider info (identifier, version, features)  |
+| `/health`                        | GET    | Health check with version and config status    |
+| `/test`                          | GET    | Test search: `?title=X&year=Y&imdb=ttZ`        |
+| `/cache`                         | GET    | List cached entries or view specific: `?key=X` |
+| `/cache/clear`                   | POST   | Clear cached entries (preserves credentials)   |
+| `/library/metadata/<key>`        | GET    | Plex metadata lookup                           |
+| `/library/metadata/matches`      | POST   | Plex match endpoint                            |
+| `/library/metadata/<key>/images` | GET    | Returns empty (no artwork)                     |
+| `/library/metadata/<key>/extras` | GET    | Returns empty (no extras)                      |
 
 ## File Structure
 
@@ -310,12 +334,14 @@ docker exec vpro-plex-provider python vpro_cinema_scraper.py --refresh-credentia
 ### Search not finding films
 
 Try with the original (non-English) title:
+
 ```bash
 # Instead of "Downfall", try:
 docker exec vpro-plex-provider python vpro_cinema_scraper.py "Der Untergang" --year 2004
 ```
 
 Or provide the IMDB ID for automatic alternate title lookup (requires TMDB_API_KEY):
+
 ```bash
 docker exec vpro-plex-provider python vpro_cinema_scraper.py "Downfall" --year 2004 --imdb tt0363163
 ```
@@ -341,7 +367,8 @@ docker-compose up -d
 
 ## Limitations
 
-- **POMS API is undocumented** — Not officially supported by NPO. You may get rate-limited, blocked, or the API may change without notice
+- **POMS API is undocumented** — Not officially supported by NPO. You may get rate-limited, blocked, or the API may
+  change without notice
 - **Movies only** — No TV shows or documentaries (yet)
 - **Not all films covered** — Only films reviewed by VPRO Cinema are available
 - **No artwork** — Use the recommended agent setup, which falls back to Plex Movie for posters
