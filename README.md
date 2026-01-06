@@ -89,7 +89,8 @@ docker-compose logs -f
 
 ### 4. Register with Plex
 
-**Important:** The provider URL must be reachable from your Plex server.
+>**Important:** The provider URL must be reachable from your Plex server. Replace `localhost` in the examples below
+with the IP of the server you have the provider running on, if not on the same server as Plex itself.
 
 This provider exposes **two separate endpoints** — one for movies and one for TV shows. This is required by Plex's
 Custom Metadata Provider API to allow combining with secondary providers like "Plex Movie" and "Plex Series".
@@ -108,14 +109,18 @@ Custom Metadata Provider API to allow combining with secondary providers like "P
 
 You should now see both "VPRO Cinema (Dutch Summaries)" and "VPRO Cinema TV (Dutch Summaries)" in the providers list.
 
+<img width="601" height="290" alt="image" src="https://github.com/user-attachments/assets/e0026224-c13b-4f7c-a5a0-a6c6ca4e206a" />
+
 #### Create a Movie Agent
 
 7. Under *Metadata Agents* click **+ Add Agent**
 8. Give the agent a title, example: "VPRO + Plex Movie"
 9. Select `VPRO Cinema (Dutch Summaries)` as the primary metadata provider
 10. A section 'additional providers' appears, pick "Plex Movie" and click the **+** button
-11. Optionally add "Plex Local Media" from the dropdown
+11. Optionally add "Plex Local Media" from the dropdown (don't forget to click the **+** button)
 12. Click **Save**
+
+<img width="499" height="647" alt="image" src="https://github.com/user-attachments/assets/b04bf7c6-b261-42f0-8a35-18c34fa1a3e1" />
 
 #### Create a TV Show Agent
 
@@ -123,8 +128,10 @@ You should now see both "VPRO Cinema (Dutch Summaries)" and "VPRO Cinema TV (Dut
 14. Give the agent a title, example: "VPRO TV + Plex Series"
 15. Select `VPRO Cinema TV (Dutch Summaries)` as the primary metadata provider
 16. Pick "Plex Series" and click the **+** button
-17. Optionally add "Plex Local Media"
+17. Optionally add "Plex Local Media" (don't forget to click the **+** button)
 18. Click **Save**
+
+<img width="497" height="645" alt="image" src="https://github.com/user-attachments/assets/c8f07c1d-e07e-4859-b2b6-85d15aa443bc" />
 
 Done! The agents are now configured to first search for Dutch summaries on VPRO Cinema, falling back to Plex
 Movie/Series for remaining metadata (artwork, cast, etc.).
