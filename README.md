@@ -1,5 +1,7 @@
 # VPRO Cinema Metadata Provider for Plex
 
+![Example of the Metadata Provider in action!](https://github.com/user-attachments/assets/002b61b3-c05c-4888-a1c6-c34bf38d6dd1)
+
 A custom metadata provider that supplies Dutch film descriptions from VPRO Cinema (vprogids.nl) to Plex Media Server.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
