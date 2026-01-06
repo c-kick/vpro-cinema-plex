@@ -819,9 +819,13 @@ def _search_vpro_single_title(
                             logger.info(f"POMS: Exact match - {film.title} ({film.year})")
                             return film
                 
-                # Title match only
+                # Title match only (with year validation if year provided)
                 for film in films:
                     if _titles_match(film.title, title):
+                        # If year provided, validate year is within acceptable range
+                        if year and film.year and abs(film.year - year) > 2:
+                            logger.warning(f"POMS: Rejecting title match '{film.title}' ({film.year}) - year diff {abs(film.year - year)}")
+                            continue
                         logger.info(f"POMS: Title match - {film.title} ({film.year})")
                         return film
                 
