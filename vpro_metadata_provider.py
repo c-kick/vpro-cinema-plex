@@ -376,7 +376,9 @@ def provider_root():
             "version": PROVIDER_VERSION,
             "Types": [
                 {"type": 1, "Scheme": [{"scheme": PROVIDER_IDENTIFIER}]},  # Movies
-                {"type": 2, "Scheme": [{"scheme": PROVIDER_IDENTIFIER}]}   # TV Shows
+                {"type": 2, "Scheme": [{"scheme": PROVIDER_IDENTIFIER}]},  # TV Shows
+                {"type": 3, "Scheme": [{"scheme": PROVIDER_IDENTIFIER}]},  # Seasons
+                {"type": 4, "Scheme": [{"scheme": PROVIDER_IDENTIFIER}]}   # Episodes
             ],
             "Feature": [
                 {"type": "metadata", "key": "/library/metadata"},
@@ -571,13 +573,34 @@ def match_metadata():
     if not year and filename:
         year = extract_year_from_filename(filename)
     
-    # Handle movies (type 1) and TV shows (type 2)
+    # Handle different metadata types
+    # Type 1 = Movie, Type 2 = TV Show, Type 3 = Season, Type 4 = Episode
     if metadata_type == 1:
         media_type = "film"
         plex_type = "movie"
     elif metadata_type == 2:
         media_type = "series"
         plex_type = "show"
+    elif metadata_type == 3:
+        # Seasons - return empty to let Plex Series handle it
+        logger.info(f"Season match request - delegating to secondary provider")
+        return jsonify({
+            "MediaContainer": {
+                "offset": 0, "totalSize": 0,
+                "identifier": PROVIDER_IDENTIFIER, "size": 0,
+                "Metadata": []
+            }
+        })
+    elif metadata_type == 4:
+        # Episodes - return empty to let Plex Series handle it
+        logger.info(f"Episode match request - delegating to secondary provider")
+        return jsonify({
+            "MediaContainer": {
+                "offset": 0, "totalSize": 0,
+                "identifier": PROVIDER_IDENTIFIER, "size": 0,
+                "Metadata": []
+            }
+        })
     else:
         return jsonify({
             "MediaContainer": {
