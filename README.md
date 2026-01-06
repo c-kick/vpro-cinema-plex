@@ -36,7 +36,7 @@ git clone https://github.com/c-kick/vpro-cinema-plex.git
 cd vpro-cinema-plex
 
 # Copy and edit environment file
-cp .env.example .env
+cp env.example .env
 ```
 
 #### Optionally: 
@@ -190,10 +190,10 @@ The provider automatically refreshes POMS API credentials if authentication fail
 docker exec vpro-plex-provider python vpro_cinema_scraper.py --refresh-credentials
 
 # View cached credentials
-docker exec vpro-plex-provider cat credentials.json
+docker exec vpro-plex-provider cat cache/credentials.json
 
 # Simulate auth failure to test auto-refresh
-docker exec vpro-plex-provider sh -c 'echo "{\"api_key\":\"bad\",\"api_secret\":\"bad\"}" > credentials.json'
+docker exec vpro-plex-provider sh -c 'echo "{\"api_key\":\"bad\",\"api_secret\":\"bad\"}" > cache/credentials.json'
 docker exec vpro-plex-provider python vpro_cinema_scraper.py "The Matrix" --year 1999 -v
 # Should show: "auth failed, refreshing credentials..."
 ```
@@ -204,11 +204,11 @@ docker exec vpro-plex-provider python vpro_cinema_scraper.py "The Matrix" --year
 # View all cached entries
 curl "http://localhost:5100/cache"
 
-# Clear all cache
+# Clear all cache (preserves credentials.json)
 curl -X POST "http://localhost:5100/cache/clear"
 
-# Clear cache via filesystem
-docker exec vpro-plex-provider rm -f cache/*.json
+# Clear cache via filesystem (preserve credentials)
+docker exec vpro-plex-provider sh -c 'find cache -name "*.json" ! -name "credentials.json" -delete'
 ```
 
 ### View logs
@@ -239,10 +239,11 @@ docker logs -f vpro-plex-provider
 | `/health` | GET | Health check with version and config status |
 | `/test` | GET | Test search: `?title=X&year=Y&imdb=ttZ` |
 | `/cache` | GET | List cached entries or view specific: `?key=X` |
-| `/cache/clear` | POST | Clear all cached entries |
+| `/cache/clear` | POST | Clear cached entries (preserves credentials) |
 | `/library/metadata/<key>` | GET | Plex metadata lookup |
 | `/library/metadata/matches` | POST | Plex match endpoint |
 | `/library/metadata/<key>/images` | GET | Returns empty (no artwork) |
+| `/library/metadata/<key>/extras` | GET | Returns empty (no extras) |
 
 ## File Structure
 
@@ -250,8 +251,8 @@ docker logs -f vpro-plex-provider
 vpro-cinema-plex/
 ├── docker-compose.yml          # Docker Compose config
 ├── Dockerfile                  # Container definition
-├── .env.example                # Environment template
-├── .gitignore
+├── env.example                 # Environment template (copy to .env)
+├── gitignore                   # Git ignore rules (rename to .gitignore)
 ├── requirements.txt            # Python dependencies
 ├── vpro_cinema_scraper.py      # Core search/scrape logic (v2.5.0)
 ├── vpro_metadata_provider.py   # Flask server for Plex (v2.4.0)

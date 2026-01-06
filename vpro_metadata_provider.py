@@ -317,9 +317,10 @@ def cache_status():
 
 @app.route('/cache/clear', methods=['POST'])
 def cache_clear():
-    """Clear all cache entries."""
+    """Clear all cache entries (preserves credentials.json)."""
     try:
-        cache_files = [f for f in os.listdir(CACHE_DIR) if f.endswith('.json')]
+        cache_files = [f for f in os.listdir(CACHE_DIR)
+                       if f.endswith('.json') and f != 'credentials.json']
         for f in cache_files:
             os.remove(os.path.join(CACHE_DIR, f))
         return jsonify({"cleared": len(cache_files)})
