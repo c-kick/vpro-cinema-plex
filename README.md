@@ -2,7 +2,7 @@
 
 ![Example of the Metadata Provider in action!](https://github.com/user-attachments/assets/002b61b3-c05c-4888-a1c6-c34bf38d6dd1)
 
-A custom metadata provider that supplies Dutch film descriptions from [VPRO Cinema](https://www.vprogids.nl/cinema/) to Plex Media Server.
+A custom metadata provider that supplies Dutch film and TV series descriptions from [VPRO Cinema](https://www.vprogids.nl/cinema/) to Plex Media Server.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
@@ -11,9 +11,10 @@ A custom metadata provider that supplies Dutch film descriptions from [VPRO Cine
 
 ## Features
 
-- 🇳🇱 Dutch film reviews/descriptions from VPRO Cinema's database
+- 🇳🇱 Dutch film and TV series reviews/descriptions from VPRO Cinema's database
+- 📺 Supports both movies and TV series
 - 🔍 Direct NPO POMS API access with automatic credential refresh
-- 🌍 TMDB alternate title lookup (enables matching movie titles in other languages)
+- 🌍 TMDB alternate title lookup (enables matching titles in other languages)
 - 💾 Persistent caching with TTL for not-found entries
 - 🔧 Self-healing: auto-refreshes API credentials if authentication fails
 - 🐳 Docker-ready with health checks
@@ -94,30 +95,42 @@ docker-compose logs -f
 2. Go to **Settings** → **Metadata Agents** (not the legacy one!)
 3. Under *Metadata Providers* click **+ Add Provider**
 4. Paste the URL to the agent, example: `http://localhost:5100/` and click **Save**
+
+#### Create a Movie Agent
+
 5. Under *Metadata Agents* click **+ Add Agent**
 6. Give the agent a title, example: "VPRO Cinema + Plex Movie"
 7. Select `VPRO Cinema (Dutch Summaries)` as the primary metadata provider
 8. A section 'additional providers' appears, pick "Plex Movie" and click the **+** button
-9. Lastly, pick "Plex Local Media" from the dropdown and click the **+** button
+9. Optionally add "Plex Local Media" from the dropdown
 10. Click **Save**
 
-Done! The agent is now configured to first search for Dutch movie summaries on VPRO Cinema, and get the rest of the
-metadata from Plex Movie, falling back to local media. If no summary is found on VPRO Cinema, it falls back to Plex
-Movie (and then to local media).
+#### Create a TV Show Agent (optional)
 
-### 5. Configure your library
+11. Under *Metadata Agents* click **+ Add Agent** again
+12. Give the agent a title, example: "VPRO Cinema + Plex Series"
+13. Select `VPRO Cinema (Dutch Summaries)` as the primary metadata provider
+14. Pick "Plex Series" and click the **+** button
+15. Optionally add "Plex Local Media"
+16. Click **Save**
+
+Done! The agents are now configured to first search for Dutch summaries on VPRO Cinema, falling back to Plex
+Movie/Series for remaining metadata.
+
+### 5. Configure your libraries
 
 1. Go to **Plex Settings** → **Manage Libraries**
 2. Click the `...` next to your movie library → **Edit Library**
 3. Go to **Advanced** tab
-4. Under **Agent**, select the agent you just created ("VPRO Cinema + Plex Movie")
+4. Under **Agent**, select the movie agent you created ("VPRO Cinema + Plex Movie")
 5. Click **Save Changes**
+6. Repeat for your TV show library, selecting the TV show agent ("VPRO Cinema + Plex Series")
 
 ### 6. Refresh metadata
 
-For existing movies: Select movies → `...` → **Refresh Metadata**
+For existing content: Select items → `...` → **Refresh Metadata**
 
-New movies will automatically use the provider on scan.
+New movies and TV shows will automatically use the provider on scan.
 
 ## How It Works
 
@@ -159,8 +172,14 @@ New movies will automatically use the provider on scan.
 `/library/metadata` endpoints below.
 
 ```bash
-# Basic search
+# Basic search (searches both films and series by default)
 docker exec vpro-plex-provider python vpro_cinema_scraper.py "Apocalypse Now" --year 1979
+
+# Search for TV series only
+docker exec vpro-plex-provider python vpro_cinema_scraper.py "Adolescence" --year 2025 --type series
+
+# Search for films only
+docker exec vpro-plex-provider python vpro_cinema_scraper.py "Downfall" --year 2004 --type film
 
 # With IMDB ID (enables TMDB alternate title lookup) in verbose mode (showing full search flow)
 docker exec vpro-plex-provider python vpro_cinema_scraper.py "Downfall" --year 2004 --imdb tt0363163 -v
@@ -195,11 +214,14 @@ Found via alternate title 'Der Untergang': Der Untergang
 ### Test via HTTP endpoints
 
 ```bash
-# Test endpoint with JSON response
-curl "http://localhost:5100/test?title=Le+dernier+métro&year=2004"
+# Test endpoint with JSON response (film)
+curl "http://localhost:5100/test?title=Le+dernier+métro&year=1980"
+
+# Test endpoint for TV series
+curl "http://localhost:5100/test?title=Adolescence&year=2025&type=series"
 
 # Test the actual Plex metadata endpoint (this will produce cached results)
-curl "http://localhost:5100/library/metadata/vpro-apocalypse-now-1979-tt0078788"
+curl "http://localhost:5100/library/metadata/vpro-apocalypse-now-1979-tt0078788-m"
 
 # View cache status
 curl "http://localhost:5100/cache"
@@ -268,7 +290,7 @@ docker logs -f vpro-plex-provider
 |----------------------------------|--------|------------------------------------------------|
 | `/`                              | GET    | Provider info (identifier, version, features)  |
 | `/health`                        | GET    | Health check with version and config status    |
-| `/test`                          | GET    | Test search: `?title=X&year=Y&imdb=ttZ`        |
+| `/test`                          | GET    | Test search: `?title=X&year=Y&imdb=ttZ&type=T` |
 | `/cache`                         | GET    | List cached entries or view specific: `?key=X` |
 | `/cache/clear`                   | POST   | Clear cached entries (preserves credentials)   |
 | `/library/metadata/<key>`        | GET    | Plex metadata lookup                           |
@@ -285,8 +307,8 @@ vpro-cinema-plex/
 ├── env.example                 # Environment template (copy to .env)
 ├── gitignore                   # Git ignore rules (rename to .gitignore)
 ├── requirements.txt            # Python dependencies
-├── vpro_cinema_scraper.py      # Core search/scrape logic (v2.5.0)
-├── vpro_metadata_provider.py   # Flask server for Plex (v2.4.0)
+├── vpro_cinema_scraper.py      # Core search/scrape logic (v3.0.0)
+├── vpro_metadata_provider.py   # Flask server for Plex (v3.0.0)
 ├── LICENSE                     # MIT License
 └── README.md                   # This file
 ```
@@ -407,13 +429,19 @@ docker-compose logs --tail=50
 - **Configuration preserved** — Your `.env` file is not overwritten by `git pull`
 - **No Plex reconfiguration needed** — The provider URL stays the same, so Plex continues to work without changes
 
+### Upgrading to v3.0.0 (TV series support)
+
+If you're upgrading from v2.x to v3.0.0, Plex may not recognize the new TV series capabilities until you
+**remove and re-add the provider** in Plex Settings → Metadata Agents. This is because Plex caches provider
+capabilities. After re-adding, you can create a TV show agent as described in the Quick Start section.
+
 ## Limitations
 
 - **POMS API is undocumented** — Not officially supported by NPO. You may get rate-limited, blocked, or the API may
   change without notice
-- **Movies only** — No TV shows or documentaries (yet, but I'm looking into this)
-- **Not all films covered** — Only films reviewed by VPRO Cinema are available
-- **No artwork** — Use the recommended agent setup, which falls back to Plex Movie for posters
+- **Not all content covered** — Only films and series reviewed by VPRO Cinema are available
+- **No documentaries** — Documentaries are not yet supported
+- **No artwork** — Use the recommended agent setup, which falls back to Plex Movie/Series for posters
 - **Web search fallback** — May occasionally hit rate limits or CAPTCHAs
 
 ## License
