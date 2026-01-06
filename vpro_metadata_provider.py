@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 """
-VPRO Cinema Plex Metadata Provider v2.4.0
+VPRO Cinema Plex Metadata Provider v3.0.0
 
-A custom Plex metadata provider that fetches Dutch film descriptions from VPRO Cinema.
+A custom Plex metadata provider that fetches Dutch film and TV series
+descriptions from VPRO Cinema.
 
-Changes in 2.4.0:
-    - Fixed PROVIDER_IDENTIFIER to match v2.0.0 (was causing Plex registration issues)
-    - Restored /test and /cache endpoints for debugging
-    - Kept TMDB alternate titles fallback from v2.3.0
+Changes in 3.0.0:
+    - Added TV series support (VPRO Cinema /cinema/series/)
+    - Updated cache key format to include media type (backwards-compatible)
+    - POMS API now searches both MOVIE and SERIES types
+    - TMDB lookup now supports TV series (tv_results)
+    - Web search fallback searches both /cinema/films/ and /cinema/series/
 
 Architecture:
     /library/metadata/matches (POST)
         - Returns IMMEDIATELY with basic match (title, year, ratingKey)
-        - NO search - encodes title/year/imdb_id in ratingKey for later lookup
+        - NO search - encodes title/year/imdb_id/media_type in ratingKey for later lookup
+        - Supports both movies (type 1) and TV shows (type 2)
         - This prevents Plex UI timeouts
 
     /library/metadata/{ratingKey} (GET)
@@ -45,7 +49,7 @@ from vpro_cinema_scraper import get_vpro_description, VPROFilm
 # CRITICAL: Use the same identifier as v2.0.0 to maintain Plex registration
 PROVIDER_IDENTIFIER = "tv.plex.agents.custom.vpro.cinema"
 PROVIDER_TITLE = "VPRO Cinema (Dutch Summaries)"
-PROVIDER_VERSION = "2.4.0"
+PROVIDER_VERSION = "3.0.0"
 
 PORT = int(os.environ.get("PORT", 5100))
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
@@ -79,26 +83,48 @@ def _sanitize_for_key(text: str) -> str:
     return text[:50]
 
 
-def generate_rating_key(title: str, year: Optional[int] = None, imdb_id: Optional[str] = None) -> str:
+def generate_rating_key(
+    title: str,
+    year: Optional[int] = None,
+    imdb_id: Optional[str] = None,
+    media_type: str = "film"
+) -> str:
     """
-    Generate a rating key encoding title, year, and IMDB ID.
-    Format: vpro-{sanitized_title}-{year}-{imdb_id}
+    Generate a rating key encoding title, year, IMDB ID, and media type.
+
+    Format: vpro-{sanitized_title}-{year}-{imdb_id}-{type}
+    Where type is 'm' for film/movie or 's' for series.
+
+    Backwards compatible: old keys without type suffix are treated as films.
     """
     sanitized_title = _sanitize_for_key(title) or "unknown"
     year_str = str(year) if year else "0"
     imdb_str = imdb_id.lower() if imdb_id else "none"
-    return f"vpro-{sanitized_title}-{year_str}-{imdb_str}"
+    type_char = "s" if media_type == "series" else "m"
+    return f"vpro-{sanitized_title}-{year_str}-{imdb_str}-{type_char}"
 
 
 def parse_rating_key(rating_key: str) -> dict:
-    """Parse a rating key back into components."""
-    result = {"title": None, "year": None, "imdb_id": None}
-    
+    """Parse a rating key back into components.
+
+    Backwards compatible: keys without type suffix are treated as films.
+    """
+    result = {"title": None, "year": None, "imdb_id": None, "media_type": "film"}
+
     if not rating_key or not rating_key.startswith("vpro-"):
         return result
-    
+
     key_part = rating_key[5:]  # Remove "vpro-"
-    
+
+    # Extract media type from end (new format: -m or -s)
+    if key_part.endswith("-m"):
+        result["media_type"] = "film"
+        key_part = key_part[:-2]
+    elif key_part.endswith("-s"):
+        result["media_type"] = "series"
+        key_part = key_part[:-2]
+    # else: old format without type suffix, default to "film"
+
     # Extract IMDB ID from end
     imdb_match = re.search(r'-(tt\d+)$', key_part)
     if imdb_match:
@@ -106,7 +132,7 @@ def parse_rating_key(rating_key: str) -> dict:
         key_part = key_part[:imdb_match.start()]
     elif key_part.endswith("-none"):
         key_part = key_part[:-5]
-    
+
     # Extract year
     year_match = re.search(r'-(\d{4})$', key_part)
     if year_match:
@@ -116,11 +142,11 @@ def parse_rating_key(rating_key: str) -> dict:
         key_part = key_part[:year_match.start()]
     elif key_part.endswith("-0"):
         key_part = key_part[:-2]
-    
+
     # Remaining is title
     if key_part:
         result["title"] = key_part.replace("-", " ").strip()
-    
+
     return result
 
 
@@ -219,34 +245,41 @@ def _cache_write(rating_key: str, data: dict):
 def test_search():
     """
     Test endpoint for manual testing.
-    
+
     Usage:
         /test?title=Apocalypse+Now
         /test?title=Apocalypse+Now&year=1979
         /test?title=The+Last+Metro&year=1980&imdb=tt0080610
+        /test?title=Adolescence&year=2025&type=series
     """
     title = request.args.get('title', '')
     year = request.args.get('year', type=int)
     imdb_id = request.args.get('imdb', '')
-    
+    media_type = request.args.get('type', 'all')
+
+    # Validate media_type
+    if media_type not in ('film', 'series', 'all'):
+        media_type = 'all'
+
     if not title:
         return jsonify({
             "error": "Missing 'title' parameter",
-            "usage": "/test?title=Movie+Name&year=1979&imdb=tt1234567",
+            "usage": "/test?title=Name&year=1979&imdb=tt1234567&type=film|series|all",
             "examples": [
                 "/test?title=Apocalypse+Now&year=1979",
                 "/test?title=The+Last+Metro&year=1980&imdb=tt0080610",
-                "/test?title=Le+dernier+métro&year=1980"
+                "/test?title=Adolescence&year=2025&type=series"
             ]
         }), 400
-    
-    logger.info(f"Test search: title='{title}', year={year}, imdb={imdb_id}")
-    
+
+    logger.info(f"Test search: title='{title}', year={year}, imdb={imdb_id}, type={media_type}")
+
     try:
         film = get_vpro_description(
             title=title,
             year=year,
             imdb_id=imdb_id or None,
+            media_type=media_type,
             verbose=False
         )
     except Exception as e:
@@ -263,10 +296,11 @@ def test_search():
     
     return jsonify({
         "found": True,
-        "query": {"title": title, "year": year, "imdb": imdb_id},
+        "query": {"title": title, "year": year, "imdb": imdb_id, "type": media_type},
         "result": {
             "title": film.title,
             "year": film.year,
+            "media_type": film.media_type,
             "director": getattr(film, 'director', None),
             "imdb_id": film.imdb_id,
             "vpro_id": film.vpro_id,
@@ -341,7 +375,8 @@ def provider_root():
             "title": PROVIDER_TITLE,
             "version": PROVIDER_VERSION,
             "Types": [
-                {"type": 1, "Scheme": [{"scheme": PROVIDER_IDENTIFIER}]}
+                {"type": 1, "Scheme": [{"scheme": PROVIDER_IDENTIFIER}]},  # Movies
+                {"type": 2, "Scheme": [{"scheme": PROVIDER_IDENTIFIER}]}   # TV Shows
             ],
             "Feature": [
                 {"type": "metadata", "key": "/library/metadata"},
@@ -369,18 +404,22 @@ def get_metadata(rating_key: str):
     cached = _cache_read(rating_key)
     if cached:
         logger.info(f"Cache hit for {rating_key}")
-        
+
+        # Get media type from cache or default to film
+        cached_media_type = cached.get("media_type", "film")
+        plex_type = "show" if cached_media_type == "series" else "movie"
+
         plex_metadata = {
             "ratingKey": rating_key,
             "key": f"/library/metadata/{rating_key}",
-            "guid": f"{PROVIDER_IDENTIFIER}://movie/{rating_key}",
-            "type": "movie",
+            "guid": f"{PROVIDER_IDENTIFIER}://{plex_type}/{rating_key}",
+            "type": plex_type,
         }
-        
+
         # Only include summary if we have a description
         if cached.get("description"):
             plex_metadata["summary"] = cached["description"]
-        
+
         # Include external GUIDs
         guids = []
         if cached.get("imdb_id"):
@@ -389,7 +428,7 @@ def get_metadata(rating_key: str):
             guids.append({"id": f"vpro://{cached['vpro_id']}"})
         if guids:
             plex_metadata["Guid"] = guids
-        
+
         return jsonify({
             "MediaContainer": {
                 "offset": 0,
@@ -399,12 +438,13 @@ def get_metadata(rating_key: str):
                 "Metadata": [plex_metadata]
             }
         })
-    
+
     # Parse rating key to get search parameters
     parsed = parse_rating_key(rating_key)
     title = parsed.get("title")
     year = parsed.get("year")
     imdb_id = parsed.get("imdb_id")
+    media_type = parsed.get("media_type", "film")
     
     if not title:
         logger.warning(f"Could not parse title from rating key: {rating_key}")
@@ -418,32 +458,34 @@ def get_metadata(rating_key: str):
             }
         }), 404
     
-    logger.info(f"Cache miss - searching VPRO: title='{title}', year={year}, imdb={imdb_id}")
-    
+    plex_type = "show" if media_type == "series" else "movie"
+    logger.info(f"Cache miss - searching VPRO: title='{title}', year={year}, imdb={imdb_id}, type={media_type}")
+
     # Perform the VPRO lookup
     try:
         film = get_vpro_description(
             title=title,
             year=year,
             imdb_id=imdb_id,
+            media_type=media_type,
             verbose=False
         )
     except Exception as e:
         logger.error(f"VPRO search error: {e}")
         film = None
-    
+
     # Build response metadata
     plex_metadata = {
         "ratingKey": rating_key,
         "key": f"/library/metadata/{rating_key}",
-        "guid": f"{PROVIDER_IDENTIFIER}://movie/{rating_key}",
-        "type": "movie",
+        "guid": f"{PROVIDER_IDENTIFIER}://{plex_type}/{rating_key}",
+        "type": plex_type,
     }
-    
+
     if film and film.description:
         # Found - include summary
         plex_metadata["summary"] = film.description
-        
+
         guids = []
         if film.imdb_id:
             guids.append({"id": f"imdb://{film.imdb_id}"})
@@ -451,7 +493,7 @@ def get_metadata(rating_key: str):
             guids.append({"id": f"vpro://{film.vpro_id}"})
         if guids:
             plex_metadata["Guid"] = guids
-        
+
         _cache_write(rating_key, {
             "title": film.title,
             "year": film.year,
@@ -459,13 +501,14 @@ def get_metadata(rating_key: str):
             "description": film.description,
             "imdb_id": film.imdb_id,
             "vpro_id": film.vpro_id,
+            "media_type": film.media_type,
         })
-        
-        logger.info(f"VPRO found: {film.title} ({film.year}) - {len(film.description)} chars")
+
+        logger.info(f"VPRO found: {film.title} ({film.year}) [{film.media_type}] - {len(film.description)} chars")
     else:
         # Not found - return without summary for secondary provider fallback
         logger.info(f"No VPRO match for '{title}' - returning without summary")
-        
+
         _cache_write(rating_key, {
             "title": title,
             "year": year,
@@ -473,6 +516,7 @@ def get_metadata(rating_key: str):
             "description": None,
             "imdb_id": imdb_id,
             "vpro_id": None,
+            "media_type": media_type,
         })
     
     return jsonify({
@@ -527,8 +571,14 @@ def match_metadata():
     if not year and filename:
         year = extract_year_from_filename(filename)
     
-    # Only handle movies
-    if metadata_type != 1:
+    # Handle movies (type 1) and TV shows (type 2)
+    if metadata_type == 1:
+        media_type = "film"
+        plex_type = "movie"
+    elif metadata_type == 2:
+        media_type = "series"
+        plex_type = "show"
+    else:
         return jsonify({
             "MediaContainer": {
                 "offset": 0, "totalSize": 0,
@@ -536,8 +586,8 @@ def match_metadata():
                 "Metadata": []
             }
         })
-    
-    logger.info(f"Match request: title='{title}', year={year}, imdb={imdb_id}")
+
+    logger.info(f"Match request: title='{title}', year={year}, imdb={imdb_id}, type={media_type}")
     
     if not title:
         return jsonify({
@@ -548,25 +598,25 @@ def match_metadata():
             }
         })
     
-    rating_key = generate_rating_key(title, year, imdb_id)
-    
+    rating_key = generate_rating_key(title, year, imdb_id, media_type)
+
     match_metadata = {
         "ratingKey": rating_key,
         "key": f"/library/metadata/{rating_key}",
-        "guid": f"{PROVIDER_IDENTIFIER}://movie/{rating_key}",
-        "type": "movie",
+        "guid": f"{PROVIDER_IDENTIFIER}://{plex_type}/{rating_key}",
+        "type": plex_type,
         "title": title,
     }
     if year:
         match_metadata["year"] = int(year)
-    
+
     guids = []
     if imdb_id:
         guids.append({"id": f"imdb://{imdb_id}"})
     if guids:
         match_metadata["Guid"] = guids
-    
-    logger.info(f"Match returned: {title} ({year}) -> {rating_key}")
+
+    logger.info(f"Match returned: {title} ({year}) [{media_type}] -> {rating_key}")
     
     return jsonify({
         "MediaContainer": {
