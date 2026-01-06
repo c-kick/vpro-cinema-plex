@@ -91,40 +91,52 @@ docker-compose logs -f
 
 **Important:** The provider URL must be reachable from your Plex server.
 
+This provider exposes **two separate endpoints** — one for movies and one for TV shows. This is required by Plex's
+Custom Metadata Provider API to allow combining with secondary providers like "Plex Movie" and "Plex Series".
+
+| Endpoint | Provider Name | Use For |
+|----------|---------------|---------|
+| `http://localhost:5100/` | VPRO Cinema (Dutch Summaries) | Movies |
+| `http://localhost:5100/tv` | VPRO Cinema TV (Dutch Summaries) | TV Shows |
+
 1. Log into the Plex web interface
 2. Go to **Settings** → **Metadata Agents** (not the legacy one!)
 3. Under *Metadata Providers* click **+ Add Provider**
-4. Paste the URL to the agent, example: `http://localhost:5100/` and click **Save**
+4. Paste the **movie provider URL**: `http://localhost:5100/` and click **Save**
+5. Click **+ Add Provider** again
+6. Paste the **TV provider URL**: `http://localhost:5100/tv` and click **Save**
+
+You should now see both "VPRO Cinema (Dutch Summaries)" and "VPRO Cinema TV (Dutch Summaries)" in the providers list.
 
 #### Create a Movie Agent
 
-5. Under *Metadata Agents* click **+ Add Agent**
-6. Give the agent a title, example: "VPRO Cinema + Plex Movie"
-7. Select `VPRO Cinema (Dutch Summaries)` as the primary metadata provider
-8. A section 'additional providers' appears, pick "Plex Movie" and click the **+** button
-9. Optionally add "Plex Local Media" from the dropdown
-10. Click **Save**
+7. Under *Metadata Agents* click **+ Add Agent**
+8. Give the agent a title, example: "VPRO + Plex Movie"
+9. Select `VPRO Cinema (Dutch Summaries)` as the primary metadata provider
+10. A section 'additional providers' appears, pick "Plex Movie" and click the **+** button
+11. Optionally add "Plex Local Media" from the dropdown
+12. Click **Save**
 
-#### Create a TV Show Agent (optional)
+#### Create a TV Show Agent
 
-11. Under *Metadata Agents* click **+ Add Agent** again
-12. Give the agent a title, example: "VPRO Cinema + Plex Series"
-13. Select `VPRO Cinema (Dutch Summaries)` as the primary metadata provider
-14. Pick "Plex Series" and click the **+** button
-15. Optionally add "Plex Local Media"
-16. Click **Save**
+13. Under *Metadata Agents* click **+ Add Agent** again
+14. Give the agent a title, example: "VPRO TV + Plex Series"
+15. Select `VPRO Cinema TV (Dutch Summaries)` as the primary metadata provider
+16. Pick "Plex Series" and click the **+** button
+17. Optionally add "Plex Local Media"
+18. Click **Save**
 
 Done! The agents are now configured to first search for Dutch summaries on VPRO Cinema, falling back to Plex
-Movie/Series for remaining metadata.
+Movie/Series for remaining metadata (artwork, cast, etc.).
 
 ### 5. Configure your libraries
 
 1. Go to **Plex Settings** → **Manage Libraries**
 2. Click the `...` next to your movie library → **Edit Library**
 3. Go to **Advanced** tab
-4. Under **Agent**, select the movie agent you created ("VPRO Cinema + Plex Movie")
+4. Under **Agent**, select the movie agent you created ("VPRO + Plex Movie")
 5. Click **Save Changes**
-6. Repeat for your TV show library, selecting the TV show agent ("VPRO Cinema + Plex Series")
+6. Repeat for your TV show library, selecting the TV show agent ("VPRO TV + Plex Series")
 
 ### 6. Refresh metadata
 
@@ -286,17 +298,34 @@ docker logs -f vpro-plex-provider
 
 ## API Endpoints
 
+### Movie Provider (`/`)
+
 | Endpoint                         | Method | Description                                    |
 |----------------------------------|--------|------------------------------------------------|
-| `/`                              | GET    | Provider info (identifier, version, features)  |
+| `/`                              | GET    | Movie provider info (type 1)                   |
+| `/library/metadata/<key>`        | GET    | Plex metadata lookup for movies                |
+| `/library/metadata/matches`      | POST   | Plex match endpoint for movies                 |
+| `/library/metadata/<key>/images` | GET    | Returns empty (no artwork)                     |
+| `/library/metadata/<key>/extras` | GET    | Returns empty (no extras)                      |
+
+### TV Provider (`/tv`)
+
+| Endpoint                            | Method | Description                                 |
+|-------------------------------------|--------|---------------------------------------------|
+| `/tv`                               | GET    | TV provider info (types 2, 3, 4)            |
+| `/tv/library/metadata/<key>`        | GET    | Plex metadata lookup for TV shows           |
+| `/tv/library/metadata/matches`      | POST   | Plex match endpoint for TV shows            |
+| `/tv/library/metadata/<key>/images` | GET    | Returns empty (no artwork)                  |
+| `/tv/library/metadata/<key>/extras` | GET    | Returns empty (no extras)                   |
+
+### Shared Endpoints
+
+| Endpoint                         | Method | Description                                    |
+|----------------------------------|--------|------------------------------------------------|
 | `/health`                        | GET    | Health check with version and config status    |
 | `/test`                          | GET    | Test search: `?title=X&year=Y&imdb=ttZ&type=T` |
 | `/cache`                         | GET    | List cached entries or view specific: `?key=X` |
 | `/cache/clear`                   | POST   | Clear cached entries (preserves credentials)   |
-| `/library/metadata/<key>`        | GET    | Plex metadata lookup                           |
-| `/library/metadata/matches`      | POST   | Plex match endpoint                            |
-| `/library/metadata/<key>/images` | GET    | Returns empty (no artwork)                     |
-| `/library/metadata/<key>/extras` | GET    | Returns empty (no extras)                      |
 
 ## File Structure
 
@@ -425,9 +454,17 @@ docker-compose logs --tail=50
 
 ### Upgrading to v3.0.0 (TV series support)
 
-If you're upgrading from v2.x to v3.0.0, Plex may not recognize the new TV series capabilities until you
-**remove and re-add the provider** in Plex Settings → Metadata Agents. This is because Plex caches provider
-capabilities. After re-adding, you can create a TV show agent as described in the Quick Start section.
+Version 3.0.0 introduces TV series support with a **two-provider architecture**:
+
+1. **Remove** the old provider URL in Plex Settings → Metadata Agents
+2. **Add two new provider URLs**:
+   - `http://localhost:5100/` — for movies
+   - `http://localhost:5100/tv` — for TV shows
+3. **Create a new TV Show agent** using "VPRO Cinema TV (Dutch Summaries)" as primary
+4. Your existing movie agent will continue to work with the movie provider
+
+This split is required by Plex's Custom Metadata Provider API — a single provider cannot properly combine with
+both "Plex Movie" and "Plex Series" as secondary providers. See the Quick Start section for detailed setup steps.
 
 ## Limitations
 
