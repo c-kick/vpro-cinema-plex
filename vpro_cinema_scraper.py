@@ -508,19 +508,19 @@ class POMSAPIClient:
         path = "pages/"
         params = {"profile": self.PROFILE, "max": str(max_results)}
 
-        # Build facet filter based on media_type
-        if media_type == "film":
-            type_filter = "MOVIE"
-        elif media_type == "series":
-            type_filter = "SERIES"
-        else:  # "all" - search both
-            type_filter = ["MOVIE", "SERIES"]
-
+        # Build request body - facet filter is optional
         body = {
             "highlight": True,
             "searches": {"text": query},
-            "facets": {"types": {"include": type_filter}}
         }
+
+        # Add facet filter only when searching for a specific type
+        # (POMS API doesn't accept arrays, only strings)
+        if media_type == "film":
+            body["facets"] = {"types": {"include": "MOVIE"}}
+        elif media_type == "series":
+            body["facets"] = {"types": {"include": "SERIES"}}
+        # else: "all" - no facet filter, let parse_item() filter results
 
         headers = self._get_headers(path, params)
         url = f"{self.API_BASE}/{path}?{urlencode(params)}"
