@@ -1,5 +1,10 @@
 # VPRO Cinema Metadata Provider for Plex
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/)
+[![Plex 1.40+](https://img.shields.io/badge/Plex-1.40%2B-E5A00D.svg?logo=plex&logoColor=white)](https://www.plex.tv/)
+
 A custom metadata provider that supplies Dutch film descriptions from VPRO Cinema (vprogids.nl) to Plex Media Server.
 
 ## Features
@@ -17,7 +22,7 @@ A custom metadata provider that supplies Dutch film descriptions from VPRO Cinem
 ### Required
 
 - **Docker** and **Docker Compose** — [Install Docker](https://docs.docker.com/get-docker/)
-- **Plex Media Server** — With access to Settings → Metadata Agents
+- **Plex Media Server 1.40+** — Uses the new [Custom Metadata Providers API](https://developer.plex.tv/pms/)
 
 ### Recommended
 
