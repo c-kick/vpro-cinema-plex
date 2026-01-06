@@ -323,6 +323,13 @@ vpro-cinema-plex/
    curl -X POST "http://localhost:5100/cache/clear"
    ```
 
+### Metadata no longer updating in Plex after changing the TCP port (from the default port 5100 to something else).
+
+There's a bug in Plex's metadata provider API that, once a metadata provider is registered, changes to its URL are not
+applied, and Plex keeps trying on the old port. 
+
+**Restarting the Plex server** fixes this issue.
+
 ### POMS API authentication errors
 
 The provider auto-refreshes credentials, but you can force it:
