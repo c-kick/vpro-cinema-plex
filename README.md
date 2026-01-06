@@ -130,6 +130,8 @@ New movies will automatically use the provider on scan.
 
 ### Test searches directly
 
+> **Note:** The CLI scraper (`vpro_cinema_scraper.py`) does not cache results (in `cache/`) — it only searches and returns data. Caching is handled by the HTTP provider (`vpro_metadata_provider.py`). To test with caching, use the HTTP `/library/metadata` endpoints below.
+
 ```bash
 # Basic search
 docker exec vpro-plex-provider python vpro_cinema_scraper.py "Apocalypse Now" --year 1979
@@ -147,7 +149,7 @@ docker exec vpro-plex-provider python vpro_cinema_scraper.py "The Matrix" --year
 # Test endpoint with JSON response
 curl "http://localhost:5100/test?title=Le+dernier+métro&year=1980"
 
-# Test the actual Plex metadata endpoint
+# Test the actual Plex metadata endpoint (this will produce cached results)
 curl "http://localhost:5100/library/metadata/vpro-apocalypse-now-1979-tt0078788"
 
 # View cache status
@@ -173,7 +175,7 @@ docker exec vpro-plex-provider sh -c 'echo "{\"api_key\":\"bad\",\"api_secret\":
 docker exec vpro-plex-provider python vpro_cinema_scraper.py "The Matrix" --year 1999 -v
 # Should show: "auth failed, refreshing credentials..."
 ```
-
+> **Note**: the `credentials.json` file is only created after a credential refresh (manual or automatic). If the file doesn't exist, the provider uses built-in default credentials. This is normal — the file will be created automatically if the defaults ever stop working.
 ### Cache management
 
 ```bash
