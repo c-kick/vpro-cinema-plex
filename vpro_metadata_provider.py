@@ -1,0 +1,636 @@
+#!/usr/bin/env python3
+"""
+VPRO Cinema Plex Metadata Provider v2.4.0
+
+A custom Plex metadata provider that fetches Dutch film descriptions from VPRO Cinema.
+
+Changes in 2.4.0:
+    - Fixed PROVIDER_IDENTIFIER to match v2.0.0 (was causing Plex registration issues)
+    - Restored /test and /cache endpoints for debugging
+    - Kept TMDB alternate titles fallback from v2.3.0
+
+Architecture:
+    /library/metadata/matches (POST)
+        - Returns IMMEDIATELY with basic match (title, year, ratingKey)
+        - NO search - encodes title/year/imdb_id in ratingKey for later lookup
+        - This prevents Plex UI timeouts
+
+    /library/metadata/{ratingKey} (GET)
+        - Does the actual VPRO lookup (Plex waits up to 90 seconds here)
+        - Checks file cache first
+        - Uses NPO POMS API (primary) with web search fallback
+        - Returns summary if found, omits summary for fallback to secondary provider
+
+Environment Variables:
+    PORT: Server port (default: 5100)
+    LOG_LEVEL: Logging level (default: INFO)
+    CACHE_DIR: Cache directory (default: ./cache)
+    TMDB_API_KEY: TMDB API key for alternate titles lookup (optional but recommended)
+"""
+
+import os
+import re
+import json
+import time
+import logging
+from typing import Optional, Tuple
+from flask import Flask, request, jsonify
+
+from vpro_cinema_scraper import get_vpro_description, VPROFilm
+
+# =============================================================================
+# Configuration
+# =============================================================================
+
+# CRITICAL: Use the same identifier as v2.0.0 to maintain Plex registration
+PROVIDER_IDENTIFIER = "tv.plex.agents.custom.vpro.cinema"
+PROVIDER_TITLE = "VPRO Cinema (Dutch Summaries)"
+PROVIDER_VERSION = "2.4.0"
+
+PORT = int(os.environ.get("PORT", 5100))
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+CACHE_DIR = os.environ.get("CACHE_DIR", "./cache")
+NOT_FOUND_CACHE_TTL = 7 * 24 * 60 * 60  # 7 days
+
+# Ensure cache directory exists
+os.makedirs(CACHE_DIR, exist_ok=True)
+
+# Logging setup
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Flask app
+app = Flask(__name__)
+
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+def _sanitize_for_key(text: str) -> str:
+    """Sanitize text for use in rating key (lowercase, alphanumeric, hyphens)."""
+    text = text.lower().strip()
+    text = re.sub(r'[^a-z0-9\s-]', '', text)
+    text = re.sub(r'\s+', '-', text)
+    text = re.sub(r'-+', '-', text).strip('-')
+    return text[:50]
+
+
+def generate_rating_key(title: str, year: Optional[int] = None, imdb_id: Optional[str] = None) -> str:
+    """
+    Generate a rating key encoding title, year, and IMDB ID.
+    Format: vpro-{sanitized_title}-{year}-{imdb_id}
+    """
+    sanitized_title = _sanitize_for_key(title) or "unknown"
+    year_str = str(year) if year else "0"
+    imdb_str = imdb_id.lower() if imdb_id else "none"
+    return f"vpro-{sanitized_title}-{year_str}-{imdb_str}"
+
+
+def parse_rating_key(rating_key: str) -> dict:
+    """Parse a rating key back into components."""
+    result = {"title": None, "year": None, "imdb_id": None}
+    
+    if not rating_key or not rating_key.startswith("vpro-"):
+        return result
+    
+    key_part = rating_key[5:]  # Remove "vpro-"
+    
+    # Extract IMDB ID from end
+    imdb_match = re.search(r'-(tt\d+)$', key_part)
+    if imdb_match:
+        result["imdb_id"] = imdb_match.group(1)
+        key_part = key_part[:imdb_match.start()]
+    elif key_part.endswith("-none"):
+        key_part = key_part[:-5]
+    
+    # Extract year
+    year_match = re.search(r'-(\d{4})$', key_part)
+    if year_match:
+        year_val = int(year_match.group(1))
+        if year_val > 0:
+            result["year"] = year_val
+        key_part = key_part[:year_match.start()]
+    elif key_part.endswith("-0"):
+        key_part = key_part[:-2]
+    
+    # Remaining is title
+    if key_part:
+        result["title"] = key_part.replace("-", " ").strip()
+    
+    return result
+
+
+# =============================================================================
+# Filename Extraction
+# =============================================================================
+
+def extract_imdb_from_filename(filename: str) -> Optional[str]:
+    """Extract IMDB ID from filename (Radarr naming: imdb-ttXXXXXXX)."""
+    if not filename:
+        return None
+    
+    patterns = [
+        r'imdb-(tt\d{7,})',
+        r'\{imdb-(tt\d{7,})\}',
+        r'\[(tt\d{7,})\]',
+        r'(?<![a-z])(tt\d{7,})(?![a-z])',
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, filename, re.IGNORECASE)
+        if match:
+            return match.group(1).lower()
+    
+    return None
+
+
+def extract_year_from_filename(filename: str) -> Optional[int]:
+    """Extract year from filename."""
+    if not filename:
+        return None
+    
+    match = re.search(r'\((\d{4})\)', filename)
+    if match:
+        year = int(match.group(1))
+        if 1900 <= year <= 2100:
+            return year
+    return None
+
+
+# =============================================================================
+# File-based Cache
+# =============================================================================
+
+def _get_cache_path(rating_key: str) -> str:
+    safe_key = re.sub(r'[^\w\-]', '_', rating_key)
+    return os.path.join(CACHE_DIR, f"{safe_key}.json")
+
+
+def _cache_read(rating_key: str) -> Optional[dict]:
+    """Read cached metadata. Applies TTL for not-found entries."""
+    cache_path = _get_cache_path(rating_key)
+    if not os.path.exists(cache_path):
+        return None
+    
+    try:
+        with open(cache_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        # Check TTL for not-found entries
+        if not data.get("description"):
+            fetched_at = data.get("fetched_at")
+            if fetched_at:
+                try:
+                    fetched_time = time.strptime(fetched_at, "%Y-%m-%dT%H:%M:%SZ")
+                    age = time.time() - time.mktime(fetched_time)
+                    if age > NOT_FOUND_CACHE_TTL:
+                        logger.info(f"Not-found cache expired for {rating_key}")
+                        os.remove(cache_path)
+                        return None
+                except (ValueError, OSError):
+                    pass
+        
+        return data
+    except Exception as e:
+        logger.warning(f"Cache read error: {e}")
+        return None
+
+
+def _cache_write(rating_key: str, data: dict):
+    """Write metadata to cache."""
+    cache_path = _get_cache_path(rating_key)
+    try:
+        data["fetched_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        with open(cache_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.warning(f"Cache write error: {e}")
+
+
+# =============================================================================
+# Test Endpoint
+# =============================================================================
+
+@app.route('/test', methods=['GET'])
+def test_search():
+    """
+    Test endpoint for manual testing.
+    
+    Usage:
+        /test?title=Apocalypse+Now
+        /test?title=Apocalypse+Now&year=1979
+        /test?title=The+Last+Metro&year=1980&imdb=tt0080610
+    """
+    title = request.args.get('title', '')
+    year = request.args.get('year', type=int)
+    imdb_id = request.args.get('imdb', '')
+    
+    if not title:
+        return jsonify({
+            "error": "Missing 'title' parameter",
+            "usage": "/test?title=Movie+Name&year=1979&imdb=tt1234567",
+            "examples": [
+                "/test?title=Apocalypse+Now&year=1979",
+                "/test?title=The+Last+Metro&year=1980&imdb=tt0080610",
+                "/test?title=Le+dernier+métro&year=1980"
+            ]
+        }), 400
+    
+    logger.info(f"Test search: title='{title}', year={year}, imdb={imdb_id}")
+    
+    try:
+        film = get_vpro_description(
+            title=title,
+            year=year,
+            imdb_id=imdb_id or None,
+            verbose=False
+        )
+    except Exception as e:
+        logger.error(f"Test search error: {e}")
+        return jsonify({"error": str(e), "title": title, "year": year}), 500
+    
+    if not film:
+        return jsonify({
+            "found": False,
+            "title": title,
+            "year": year,
+            "message": "Not found in VPRO Cinema"
+        }), 404
+    
+    return jsonify({
+        "found": True,
+        "query": {"title": title, "year": year, "imdb": imdb_id},
+        "result": {
+            "title": film.title,
+            "year": film.year,
+            "director": getattr(film, 'director', None),
+            "imdb_id": film.imdb_id,
+            "vpro_id": film.vpro_id,
+            "vpro_url": film.url,
+            "genres": getattr(film, 'genres', []),
+            "vpro_rating": getattr(film, 'vpro_rating', None),
+            "description_length": len(film.description) if film.description else 0,
+            "description": film.description
+        }
+    })
+
+
+# =============================================================================
+# Cache Debug Endpoint
+# =============================================================================
+
+@app.route('/cache', methods=['GET'])
+def cache_status():
+    """
+    Debug endpoint to view cached metadata.
+    
+    Usage:
+        /cache           - list all cached rating keys
+        /cache?key=xxx   - view specific cached item
+    """
+    key = request.args.get('key', '')
+    
+    if key:
+        cached = _cache_read(key)
+        if cached:
+            return jsonify({"key": key, "cached": True, "metadata": cached})
+        else:
+            return jsonify({"key": key, "cached": False}), 404
+    
+    # List all cached files
+    try:
+        cache_files = [f for f in os.listdir(CACHE_DIR) if f.endswith('.json')]
+        keys = [f[:-5] for f in cache_files]
+    except Exception:
+        keys = []
+    
+    return jsonify({
+        "cache_dir": CACHE_DIR,
+        "cache_size": len(keys),
+        "keys": keys
+    })
+
+
+@app.route('/cache/clear', methods=['POST'])
+def cache_clear():
+    """Clear all cache entries."""
+    try:
+        cache_files = [f for f in os.listdir(CACHE_DIR) if f.endswith('.json')]
+        for f in cache_files:
+            os.remove(os.path.join(CACHE_DIR, f))
+        return jsonify({"cleared": len(cache_files)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# =============================================================================
+# Provider Root
+# =============================================================================
+
+@app.route('/', methods=['GET'])
+def provider_root():
+    """Return provider information and supported features."""
+    return jsonify({
+        "MediaProvider": {
+            "identifier": PROVIDER_IDENTIFIER,
+            "title": PROVIDER_TITLE,
+            "version": PROVIDER_VERSION,
+            "Types": [
+                {"type": 1, "Scheme": [{"scheme": PROVIDER_IDENTIFIER}]}
+            ],
+            "Feature": [
+                {"type": "metadata", "key": "/library/metadata"},
+                {"type": "match", "key": "/library/metadata/matches"}
+            ]
+        }
+    })
+
+
+# =============================================================================
+# Metadata Endpoint
+# =============================================================================
+
+@app.route('/library/metadata/<rating_key>', methods=['GET'])
+def get_metadata(rating_key: str):
+    """
+    Get metadata for a specific item by its rating key.
+    
+    This is where the actual VPRO lookup happens.
+    Returns summary if found, omits summary for fallback to secondary provider.
+    """
+    logger.info(f"Metadata request for: {rating_key}")
+    
+    # Check cache first
+    cached = _cache_read(rating_key)
+    if cached:
+        logger.info(f"Cache hit for {rating_key}")
+        
+        plex_metadata = {
+            "ratingKey": rating_key,
+            "key": f"/library/metadata/{rating_key}",
+            "guid": f"{PROVIDER_IDENTIFIER}://movie/{rating_key}",
+            "type": "movie",
+        }
+        
+        # Only include summary if we have a description
+        if cached.get("description"):
+            plex_metadata["summary"] = cached["description"]
+        
+        # Include external GUIDs
+        guids = []
+        if cached.get("imdb_id"):
+            guids.append({"id": f"imdb://{cached['imdb_id']}"})
+        if cached.get("vpro_id"):
+            guids.append({"id": f"vpro://{cached['vpro_id']}"})
+        if guids:
+            plex_metadata["Guid"] = guids
+        
+        return jsonify({
+            "MediaContainer": {
+                "offset": 0,
+                "totalSize": 1,
+                "identifier": PROVIDER_IDENTIFIER,
+                "size": 1,
+                "Metadata": [plex_metadata]
+            }
+        })
+    
+    # Parse rating key to get search parameters
+    parsed = parse_rating_key(rating_key)
+    title = parsed.get("title")
+    year = parsed.get("year")
+    imdb_id = parsed.get("imdb_id")
+    
+    if not title:
+        logger.warning(f"Could not parse title from rating key: {rating_key}")
+        return jsonify({
+            "MediaContainer": {
+                "offset": 0,
+                "totalSize": 0,
+                "identifier": PROVIDER_IDENTIFIER,
+                "size": 0,
+                "Metadata": []
+            }
+        }), 404
+    
+    logger.info(f"Cache miss - searching VPRO: title='{title}', year={year}, imdb={imdb_id}")
+    
+    # Perform the VPRO lookup
+    try:
+        film = get_vpro_description(
+            title=title,
+            year=year,
+            imdb_id=imdb_id,
+            verbose=False
+        )
+    except Exception as e:
+        logger.error(f"VPRO search error: {e}")
+        film = None
+    
+    # Build response metadata
+    plex_metadata = {
+        "ratingKey": rating_key,
+        "key": f"/library/metadata/{rating_key}",
+        "guid": f"{PROVIDER_IDENTIFIER}://movie/{rating_key}",
+        "type": "movie",
+    }
+    
+    if film and film.description:
+        # Found - include summary
+        plex_metadata["summary"] = film.description
+        
+        guids = []
+        if film.imdb_id:
+            guids.append({"id": f"imdb://{film.imdb_id}"})
+        if film.vpro_id:
+            guids.append({"id": f"vpro://{film.vpro_id}"})
+        if guids:
+            plex_metadata["Guid"] = guids
+        
+        _cache_write(rating_key, {
+            "title": film.title,
+            "year": film.year,
+            "url": film.url,
+            "description": film.description,
+            "imdb_id": film.imdb_id,
+            "vpro_id": film.vpro_id,
+        })
+        
+        logger.info(f"VPRO found: {film.title} ({film.year}) - {len(film.description)} chars")
+    else:
+        # Not found - return without summary for secondary provider fallback
+        logger.info(f"No VPRO match for '{title}' - returning without summary")
+        
+        _cache_write(rating_key, {
+            "title": title,
+            "year": year,
+            "url": None,
+            "description": None,
+            "imdb_id": imdb_id,
+            "vpro_id": None,
+        })
+    
+    return jsonify({
+        "MediaContainer": {
+            "offset": 0,
+            "totalSize": 1,
+            "identifier": PROVIDER_IDENTIFIER,
+            "size": 1,
+            "Metadata": [plex_metadata]
+        }
+    })
+
+
+# =============================================================================
+# Match Endpoint
+# =============================================================================
+
+@app.route('/library/metadata/matches', methods=['POST'])
+def match_metadata():
+    """
+    Match content based on hints from Plex.
+    Returns IMMEDIATELY - actual lookup happens in get_metadata.
+    """
+    data = request.get_json() or {}
+    
+    title = data.get('title', '')
+    year = data.get('year')
+    metadata_type = data.get('type', 1)
+    guid = data.get('guid', '')
+    filename = data.get('filename', '')
+    
+    # Try Media array for filename
+    media = data.get('Media', [])
+    if not filename and media:
+        try:
+            filename = media[0].get('Part', [{}])[0].get('file', '')
+        except (IndexError, KeyError, TypeError):
+            pass
+    
+    # Extract IMDB from guid first, then filename
+    imdb_id = None
+    if guid:
+        imdb_match = re.search(r'(tt\d+)', guid, re.IGNORECASE)
+        if imdb_match:
+            imdb_id = imdb_match.group(1).lower()
+    
+    if not imdb_id and filename:
+        imdb_id = extract_imdb_from_filename(filename)
+        if imdb_id:
+            logger.info(f"Extracted IMDB {imdb_id} from filename")
+    
+    if not year and filename:
+        year = extract_year_from_filename(filename)
+    
+    # Only handle movies
+    if metadata_type != 1:
+        return jsonify({
+            "MediaContainer": {
+                "offset": 0, "totalSize": 0,
+                "identifier": PROVIDER_IDENTIFIER, "size": 0,
+                "Metadata": []
+            }
+        })
+    
+    logger.info(f"Match request: title='{title}', year={year}, imdb={imdb_id}")
+    
+    if not title:
+        return jsonify({
+            "MediaContainer": {
+                "offset": 0, "totalSize": 0,
+                "identifier": PROVIDER_IDENTIFIER, "size": 0,
+                "Metadata": []
+            }
+        })
+    
+    rating_key = generate_rating_key(title, year, imdb_id)
+    
+    match_metadata = {
+        "ratingKey": rating_key,
+        "key": f"/library/metadata/{rating_key}",
+        "guid": f"{PROVIDER_IDENTIFIER}://movie/{rating_key}",
+        "type": "movie",
+        "title": title,
+    }
+    if year:
+        match_metadata["year"] = int(year)
+    
+    guids = []
+    if imdb_id:
+        guids.append({"id": f"imdb://{imdb_id}"})
+    if guids:
+        match_metadata["Guid"] = guids
+    
+    logger.info(f"Match returned: {title} ({year}) -> {rating_key}")
+    
+    return jsonify({
+        "MediaContainer": {
+            "offset": 0,
+            "totalSize": 1,
+            "identifier": PROVIDER_IDENTIFIER,
+            "size": 1,
+            "Metadata": [match_metadata]
+        }
+    })
+
+
+# =============================================================================
+# Images Endpoint
+# =============================================================================
+
+@app.route('/library/metadata/<rating_key>/images', methods=['GET'])
+def get_images(rating_key: str):
+    """Return empty - VPRO doesn't provide artwork."""
+    return jsonify({
+        "MediaContainer": {
+            "offset": 0,
+            "totalSize": 0,
+            "identifier": PROVIDER_IDENTIFIER,
+            "size": 0,
+            "Image": []
+        }
+    })
+
+
+@app.route('/library/metadata/<rating_key>/extras', methods=['GET'])
+def get_extras(rating_key: str):
+    """Return empty - no extras."""
+    return jsonify({
+        "MediaContainer": {
+            "offset": 0,
+            "totalSize": 0,
+            "identifier": PROVIDER_IDENTIFIER,
+            "size": 0,
+            "Metadata": []
+        }
+    })
+
+
+# =============================================================================
+# Health Check
+# =============================================================================
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    return jsonify({
+        "status": "healthy",
+        "version": PROVIDER_VERSION,
+        "identifier": PROVIDER_IDENTIFIER,
+        "tmdb_configured": bool(os.environ.get("TMDB_API_KEY"))
+    })
+
+
+# =============================================================================
+# Main
+# =============================================================================
+
+if __name__ == "__main__":
+    logger.info(f"Starting VPRO Cinema Provider v{PROVIDER_VERSION} on port {PORT}")
+    logger.info(f"Provider identifier: {PROVIDER_IDENTIFIER}")
+    logger.info(f"TMDB alternate titles: {'enabled' if os.environ.get('TMDB_API_KEY') else 'disabled'}")
+    logger.info(f"Test endpoint: http://localhost:{PORT}/test?title=TITLE&year=YEAR")
+    app.run(host="0.0.0.0", port=PORT, debug=False)
