@@ -1,6 +1,8 @@
 # VPRO Cinema Metadata Provider for Plex
 
-A custom metadata provider that supplies Dutch film descriptions from VPRO Cinema (vprogids.nl) to Plex Media Server.
+![Example of the Metadata Provider in action!](https://github.com/user-attachments/assets/002b61b3-c05c-4888-a1c6-c34bf38d6dd1)
+
+A custom metadata provider that supplies Dutch film descriptions from [VPRO Cinema](https://www.vprogids.nl/cinema/) to Plex Media Server.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
@@ -25,8 +27,8 @@ copying descriptions into Plex — only to have them overwritten by the next met
 build a proper solution. After some experimentation (first with scraping, then reverse-engineering the NPO's internal
 POMS API), I finally got a working Plex agent! I decided to share it with the community, hoping it can help others too.
 
-Feel free to use, fork, and contribute, but note that the API is not officially supported by NPO, so it's a bit dodgy 
-and may break at any time.
+Feel free to use, fork, and contribute, but note that the API is not officially supported by NPO, so the approach is 
+technically a bit dodgy and may break at any time. Though it has been working excellently for me, so far!
 
 ## Prerequisites
 
@@ -53,13 +55,13 @@ and may break at any time.
 git clone https://github.com/c-kick/vpro-cinema-plex.git
 cd vpro-cinema-plex
 
-# Copy and edit environment file
+# Optionally, you can copy and edit environment file if you want to change the host port, or the log_level
 cp env.example .env
 ```
 
-#### Optionally:
+#### Optionally add TMDB API key for multi-language title searches
 
-Edit `.env` and add your TMDB API key:
+Edit the `.env` file (`cp env.example .env` first, if it's not there yet) and add your TMDB API key:
 
 ```bash
 TMDB_API_KEY=your_tmdb_api_key_here
@@ -69,9 +71,6 @@ TMDB_API_KEY=your_tmdb_api_key_here
 
 ```bash
 docker-compose up -d
-
-# Check logs
-docker-compose logs -f
 ```
 
 ### 3. Verify it's running
@@ -82,6 +81,9 @@ curl "http://localhost:5100/health"
 
 # Test a search
 curl "http://localhost:5100/test?title=Apocalypse+Now&year=1979"
+
+# Check logs
+docker-compose logs -f
 ```
 
 ### 4. Register with Plex
