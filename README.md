@@ -360,12 +360,39 @@ docker exec vpro-plex-provider python vpro_cinema_scraper.py "Downfall" --year 2
 
 ## Updating
 
+To update to the latest version:
+
 ```bash
+# 1. Pull the latest changes
 git pull
+
+# 2. Stop the running container
 docker-compose down
+
+# 3. Rebuild with the latest code (--no-cache ensures fresh build)
 docker-compose build --no-cache
+
+# 4. Start the updated container
 docker-compose up -d
 ```
+
+### Verify the update
+
+After updating, verify the new version is running:
+
+```bash
+# Check the health endpoint for version info
+curl http://localhost:5100/health
+
+# Check the logs for any startup issues
+docker-compose logs --tail=50
+```
+
+### Notes
+
+- **Cache is preserved** — Your cached movie data and credentials remain intact during updates
+- **Configuration preserved** — Your `.env` file is not overwritten by `git pull`
+- **No Plex reconfiguration needed** — The provider URL stays the same, so Plex continues to work without changes
 
 ## Limitations
 
