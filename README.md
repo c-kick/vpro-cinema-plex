@@ -484,7 +484,6 @@ both "Plex Movie" and "Plex Series" as secondary providers. See the Quick Start 
 - **POMS API is undocumented** — Not officially supported by NPO. You may get rate-limited, blocked, or the API may
   change without notice
 - **Not all content covered** — Only films and series reviewed by VPRO Cinema are available
-- **No documentaries** — Documentaries are not yet supported
 - **No artwork** — Use the recommended agent setup, which falls back to Plex Movie/Series for posters
 - **Web search fallback** — May occasionally hit rate limits or CAPTCHAs
 
