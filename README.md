@@ -207,7 +207,7 @@ docker logs -f vpro-plex-provider
 | `LOG_LEVEL` | INFO | Logging level (DEBUG, INFO, WARNING, ERROR) |
 | `CACHE_DIR` | ./cache | Cache directory path |
 | `TMDB_API_KEY` | *(none)* | TMDB API key for alternate title lookup (**recommended**) |
-| `VPRO_CREDENTIALS_FILE` | ./credentials.json | Path to cached POMS credentials |
+| `POMS_CACHE_FILE` | ./credentials.json | Path to cached POMS credentials |
 
 ## API Endpoints
 
