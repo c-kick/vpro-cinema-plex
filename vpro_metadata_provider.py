@@ -48,7 +48,9 @@ from vpro_cinema_scraper import get_vpro_description, VPROFilm
 
 # CRITICAL: Use the same identifier as v2.0.0 to maintain Plex registration
 PROVIDER_IDENTIFIER = "tv.plex.agents.custom.vpro.cinema"
+PROVIDER_IDENTIFIER_TV = "tv.plex.agents.custom.vpro.cinema.tv"
 PROVIDER_TITLE = "VPRO Cinema (Dutch Summaries)"
+PROVIDER_TITLE_TV = "VPRO Cinema TV (Dutch Summaries)"
 PROVIDER_VERSION = "3.0.0"
 
 PORT = int(os.environ.get("PORT", 5100))
@@ -363,26 +365,48 @@ def cache_clear():
 
 
 # =============================================================================
-# Provider Root
+# Provider Root - Movies
 # =============================================================================
 
 @app.route('/', methods=['GET'])
 def provider_root():
-    """Return provider information and supported features."""
+    """Return provider information for MOVIES only."""
     return jsonify({
         "MediaProvider": {
             "identifier": PROVIDER_IDENTIFIER,
             "title": PROVIDER_TITLE,
             "version": PROVIDER_VERSION,
             "Types": [
-                {"type": 1, "Scheme": [{"scheme": PROVIDER_IDENTIFIER}]},  # Movies
-                {"type": 2, "Scheme": [{"scheme": PROVIDER_IDENTIFIER}]},  # TV Shows
-                {"type": 3, "Scheme": [{"scheme": PROVIDER_IDENTIFIER}]},  # Seasons
-                {"type": 4, "Scheme": [{"scheme": PROVIDER_IDENTIFIER}]}   # Episodes
+                {"type": 1, "Scheme": [{"scheme": PROVIDER_IDENTIFIER}]}  # Movies only
             ],
             "Feature": [
                 {"type": "metadata", "key": "/library/metadata"},
                 {"type": "match", "key": "/library/metadata/matches"}
+            ]
+        }
+    })
+
+
+# =============================================================================
+# Provider Root - TV Shows
+# =============================================================================
+
+@app.route('/tv', methods=['GET'])
+def provider_root_tv():
+    """Return provider information for TV SHOWS only."""
+    return jsonify({
+        "MediaProvider": {
+            "identifier": PROVIDER_IDENTIFIER_TV,
+            "title": PROVIDER_TITLE_TV,
+            "version": PROVIDER_VERSION,
+            "Types": [
+                {"type": 2, "Scheme": [{"scheme": PROVIDER_IDENTIFIER_TV}]},  # TV Shows
+                {"type": 3, "Scheme": [{"scheme": PROVIDER_IDENTIFIER_TV}]},  # Seasons
+                {"type": 4, "Scheme": [{"scheme": PROVIDER_IDENTIFIER_TV}]}   # Episodes
+            ],
+            "Feature": [
+                {"type": "metadata", "key": "/tv/library/metadata"},
+                {"type": "match", "key": "/tv/library/metadata/matches"}
             ]
         }
     })
@@ -679,6 +703,227 @@ def get_extras(rating_key: str):
             "totalSize": 0,
             "identifier": PROVIDER_IDENTIFIER,
             "size": 0,
+            "Metadata": []
+        }
+    })
+
+
+# =============================================================================
+# TV Provider Endpoints
+# =============================================================================
+
+@app.route('/tv/library/metadata/<rating_key>', methods=['GET'])
+def get_metadata_tv(rating_key: str):
+    """TV metadata endpoint - delegates to main handler, uses TV identifier in response."""
+    logger.info(f"TV Metadata request for: {rating_key}")
+
+    # Check cache first
+    cached = _cache_read(rating_key)
+    if cached:
+        logger.info(f"Cache hit for {rating_key}")
+        cached_media_type = cached.get("media_type", "series")
+        plex_type = "show" if cached_media_type == "series" else "movie"
+
+        plex_metadata = {
+            "ratingKey": rating_key,
+            "key": f"/tv/library/metadata/{rating_key}",
+            "guid": f"{PROVIDER_IDENTIFIER_TV}://{plex_type}/{rating_key}",
+            "type": plex_type,
+        }
+
+        if cached.get("found") and cached.get("description"):
+            plex_metadata["summary"] = cached["description"]
+            logger.info(f"Returning cached summary ({len(cached['description'])} chars)")
+        else:
+            logger.info("Cache indicates not found - omitting summary for fallback")
+
+        return jsonify({
+            "MediaContainer": {
+                "offset": 0, "totalSize": 1,
+                "identifier": PROVIDER_IDENTIFIER_TV, "size": 1,
+                "Metadata": [plex_metadata]
+            }
+        })
+
+    # Parse rating key
+    parsed = parse_rating_key(rating_key)
+    title = parsed["title"]
+    year = parsed["year"]
+    imdb_id = parsed["imdb_id"]
+    media_type = parsed.get("media_type", "series")
+    plex_type = "show" if media_type == "series" else "movie"
+
+    if not title:
+        logger.warning(f"Could not parse rating key: {rating_key}")
+        return jsonify({
+            "MediaContainer": {
+                "offset": 0, "totalSize": 0,
+                "identifier": PROVIDER_IDENTIFIER_TV, "size": 0,
+                "Metadata": []
+            }
+        })
+
+    logger.info(f"Searching VPRO for: {title} ({year}) [{media_type}]")
+
+    # Do VPRO lookup
+    film = get_vpro_description(title, year, imdb_id, media_type=media_type)
+
+    plex_metadata = {
+        "ratingKey": rating_key,
+        "key": f"/tv/library/metadata/{rating_key}",
+        "guid": f"{PROVIDER_IDENTIFIER_TV}://{plex_type}/{rating_key}",
+        "type": plex_type,
+    }
+
+    if film and film.description:
+        plex_metadata["summary"] = film.description
+
+        _cache_write(rating_key, {
+            "found": True,
+            "title": film.title,
+            "year": film.year,
+            "url": film.url,
+            "description": film.description,
+            "imdb_id": film.imdb_id,
+            "vpro_id": film.vpro_id,
+            "media_type": film.media_type,
+        })
+
+        logger.info(f"VPRO found: {film.title} ({film.year}) [{film.media_type}] - {len(film.description)} chars")
+    else:
+        _cache_write(rating_key, {
+            "found": False,
+            "title": title,
+            "year": year,
+            "url": None,
+            "description": None,
+            "imdb_id": imdb_id,
+            "vpro_id": None,
+            "media_type": media_type,
+        })
+        logger.info(f"VPRO not found: {title} ({year}) - omitting summary for fallback")
+
+    return jsonify({
+        "MediaContainer": {
+            "offset": 0, "totalSize": 1,
+            "identifier": PROVIDER_IDENTIFIER_TV, "size": 1,
+            "Metadata": [plex_metadata]
+        }
+    })
+
+
+@app.route('/tv/library/metadata/matches', methods=['POST'])
+def match_metadata_tv():
+    """TV match endpoint - handles TV shows, seasons, episodes."""
+    data = request.get_json() or {}
+
+    title = data.get('title', '')
+    year = data.get('year')
+    metadata_type = data.get('type', 2)  # Default to TV show
+    guid = data.get('guid', '')
+    filename = data.get('filename', '')
+
+    media = data.get('Media', [])
+    if not filename and media:
+        try:
+            filename = media[0].get('Part', [{}])[0].get('file', '')
+        except (IndexError, KeyError, TypeError):
+            pass
+
+    imdb_id = None
+    if guid:
+        imdb_match = re.search(r'(tt\d+)', guid, re.IGNORECASE)
+        if imdb_match:
+            imdb_id = imdb_match.group(1).lower()
+
+    if not imdb_id and filename:
+        imdb_id = extract_imdb_from_filename(filename)
+
+    if not year and filename:
+        year = extract_year_from_filename(filename)
+
+    # Handle TV types
+    if metadata_type == 2:
+        media_type = "series"
+        plex_type = "show"
+    elif metadata_type in (3, 4):
+        # Seasons and Episodes - delegate to secondary provider
+        logger.info(f"Season/Episode match request (type {metadata_type}) - delegating to secondary provider")
+        return jsonify({
+            "MediaContainer": {
+                "offset": 0, "totalSize": 0,
+                "identifier": PROVIDER_IDENTIFIER_TV, "size": 0,
+                "Metadata": []
+            }
+        })
+    else:
+        return jsonify({
+            "MediaContainer": {
+                "offset": 0, "totalSize": 0,
+                "identifier": PROVIDER_IDENTIFIER_TV, "size": 0,
+                "Metadata": []
+            }
+        })
+
+    logger.info(f"TV Match request: title='{title}', year={year}, imdb={imdb_id}, type={media_type}")
+
+    if not title:
+        return jsonify({
+            "MediaContainer": {
+                "offset": 0, "totalSize": 0,
+                "identifier": PROVIDER_IDENTIFIER_TV, "size": 0,
+                "Metadata": []
+            }
+        })
+
+    rating_key = generate_rating_key(title, year, imdb_id, media_type)
+
+    match_metadata = {
+        "ratingKey": rating_key,
+        "key": f"/tv/library/metadata/{rating_key}",
+        "guid": f"{PROVIDER_IDENTIFIER_TV}://{plex_type}/{rating_key}",
+        "type": plex_type,
+        "title": title,
+    }
+    if year:
+        match_metadata["year"] = int(year)
+
+    guids = []
+    if imdb_id:
+        guids.append({"id": f"imdb://{imdb_id}"})
+    if guids:
+        match_metadata["Guid"] = guids
+
+    logger.info(f"TV Match returned: {title} ({year}) [{media_type}] -> {rating_key}")
+
+    return jsonify({
+        "MediaContainer": {
+            "offset": 0, "totalSize": 1,
+            "identifier": PROVIDER_IDENTIFIER_TV, "size": 1,
+            "Metadata": [match_metadata]
+        }
+    })
+
+
+@app.route('/tv/library/metadata/<rating_key>/images', methods=['GET'])
+def get_images_tv(rating_key: str):
+    """TV images endpoint - return empty."""
+    return jsonify({
+        "MediaContainer": {
+            "offset": 0, "totalSize": 0,
+            "identifier": PROVIDER_IDENTIFIER_TV, "size": 0,
+            "Image": []
+        }
+    })
+
+
+@app.route('/tv/library/metadata/<rating_key>/extras', methods=['GET'])
+def get_extras_tv(rating_key: str):
+    """TV extras endpoint - return empty."""
+    return jsonify({
+        "MediaContainer": {
+            "offset": 0, "totalSize": 0,
+            "identifier": PROVIDER_IDENTIFIER_TV, "size": 0,
             "Metadata": []
         }
     })
