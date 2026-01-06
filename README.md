@@ -23,7 +23,7 @@ A custom metadata provider that supplies Dutch film descriptions from VPRO Cinem
 
 - **TMDB API Key** — Enables automatic alternate language title lookup
   
-  Many films are indexed in VPRO Cinema under their original (often French, German, or Dutch) title rather than the English title. Without a TMDB API key, searching for "The Last Metro" will fail, but with it, the provider automatically discovers and tries "Le dernier métro".
+  Many films are indexed in VPRO Cinema under their original (often French, German, or Dutch) title rather than the English title. Without a TMDB API key, searching for "Downfall" will fail, but with it, the provider automatically discovers and tries "Der Untergang".
 
   Get your free API key at: https://www.themoviedb.org/settings/api
 
@@ -99,7 +99,7 @@ New movies will automatically use the provider on scan.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  Plex requests metadata for "The Last Metro" (1980)             │
+│  Plex requests metadata for "Downfall" (2004)             │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -114,7 +114,7 @@ New movies will automatically use the provider on scan.
 ┌─────────────────────────────────────────────────────────────────┐
 │  2. TMDB Alternate Titles (requires TMDB_API_KEY + IMDB ID)     │
 │     └─ Fetches French/Dutch/German titles, retries search       │
-│     └─ "The Last Metro" → "Le dernier métro" → Found!           │
+│     └─ "Downfall" → "Der Untergang" → Found!           │
 └─────────────────────────────────────────────────────────────────┘
                               │
                       Still no match?
@@ -136,18 +136,40 @@ New movies will automatically use the provider on scan.
 # Basic search
 docker exec vpro-plex-provider python vpro_cinema_scraper.py "Apocalypse Now" --year 1979
 
-# With IMDB ID (enables TMDB alternate title lookup)
-docker exec vpro-plex-provider python vpro_cinema_scraper.py "The Last Metro" --year 1980 --imdb tt0080610
+# With IMDB ID (enables TMDB alternate title lookup) in verbose mode (showing full search flow)
+docker exec vpro-plex-provider python vpro_cinema_scraper.py "Downfall" --year 2004 --imdb tt0363163 -v
+```
 
-# Verbose mode (see full search flow)
-docker exec vpro-plex-provider python vpro_cinema_scraper.py "The Matrix" --year 1999 -v
+Example output:
+```
+Searching VPRO Cinema for: Downfall (2004)
+------------------------------------------------------------
+Searching VPRO: 'Downfall' (2004) [tt0363163]
+POMS: Rejecting title match 'Downfall' (1964) - year diff 40
+POMS: Rejecting 'Downfall' (1964) - year diff 40
+No POMS match for 'Downfall' - fetching alternate titles from TMDB...
+TMDB alternate titles for tt0363163: ['Der Untergang', 'A Queda! As Últimas Horas de Hitler', '몰락 - 히틀러와 제3제국의 종말', 'Undergången - Hitler och Tredje Rikets fall', 'Der Untergang - det tredje rikets siste dager']
+Trying alternate title: 'Der Untergang'
+POMS: Exact match - Der Untergang (2004)
+Found via alternate title 'Der Untergang': Der Untergang
+
+✓ Found: Der Untergang
+  Year: 2004
+  Director: Oliver Hirschbiegel
+  Rating: 8/10
+  VPRO ID: 536405
+  URL: https://www.vprogids.nl/cinema/films/film~536405~der-untergang~.html
+  Genres: Historische film, Oorlogsfilm, Drama
+
+  Description (578 chars):
+  In Der Untergang - over de laatste dagen van de Führer - wordt nauwgezet in beeld gebracht hoe Hitler (een geniale Ganz) aanvankelijk nog aardige kantjes had, bijvoorbeeld voor zijn secretaresse Traudl Junge, op wier memoires de film is gebaseerd. Eenmaal in het nauw gedreven door de geallieerden wordt hij steeds open­­lijker onaangenaam. Hitler en zijn intieme kring worden neergezet als personen die geen gevoel (meer) hebben voor de rauwe werkelijkheid. Die de kijker overigens regelmatig te zie...
 ```
 
 ### Test via HTTP endpoints
 
 ```bash
 # Test endpoint with JSON response
-curl "http://localhost:5100/test?title=Le+dernier+métro&year=1980"
+curl "http://localhost:5100/test?title=Le+dernier+métro&year=2004"
 
 # Test the actual Plex metadata endpoint (this will produce cached results)
 curl "http://localhost:5100/library/metadata/vpro-apocalypse-now-1979-tt0078788"
@@ -283,13 +305,13 @@ docker exec vpro-plex-provider python vpro_cinema_scraper.py --refresh-credentia
 
 Try with the original (non-English) title:
 ```bash
-# Instead of "The Last Metro", try:
-docker exec vpro-plex-provider python vpro_cinema_scraper.py "Le dernier métro" --year 1980
+# Instead of "Downfall", try:
+docker exec vpro-plex-provider python vpro_cinema_scraper.py "Der Untergang" --year 2004
 ```
 
 Or provide the IMDB ID for automatic alternate title lookup (requires TMDB_API_KEY):
 ```bash
-docker exec vpro-plex-provider python vpro_cinema_scraper.py "The Last Metro" --year 1980 --imdb tt0080610
+docker exec vpro-plex-provider python vpro_cinema_scraper.py "Downfall" --year 2004 --imdb tt0363163
 ```
 
 ### TMDB alternate titles not working
