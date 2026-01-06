@@ -405,7 +405,7 @@ docker-compose logs --tail=50
 
 - **POMS API is undocumented** — Not officially supported by NPO. You may get rate-limited, blocked, or the API may
   change without notice
-- **Movies only** — No TV shows or documentaries (yet)
+- **Movies only** — No TV shows or documentaries (yet, but I'm looking into this)
 - **Not all films covered** — Only films reviewed by VPRO Cinema are available
 - **No artwork** — Use the recommended agent setup, which falls back to Plex Movie for posters
 - **Web search fallback** — May occasionally hit rate limits or CAPTCHAs
