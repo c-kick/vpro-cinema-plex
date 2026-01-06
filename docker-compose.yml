@@ -1,0 +1,23 @@
+version: "3.8"
+
+services:
+  vpro-plex-provider:
+    build: .
+    container_name: vpro-plex-provider
+    ports:
+      - "${HOST_PORT:-5100}:5100"
+    environment:
+      - PORT=5100
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - TMDB_API_KEY=${TMDB_API_KEY:-}
+      - CACHE_DIR=/app/cache
+      - VPRO_CREDENTIALS_FILE=/app/cache/credentials.json
+    volumes:
+      - ./cache:/app/cache
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5100/health')"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
