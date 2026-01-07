@@ -76,6 +76,57 @@ TMDB_API_KEY=your_tmdb_api_key_here
 docker-compose up -d
 ```
 
+<details>
+<summary><strong>Alternative: Add to existing Docker stack (Portainer)</strong></summary>
+
+If you're running Plex in an existing Docker Compose stack (e.g., via Portainer), you can integrate the provider directly.
+
+#### 1. Build the image manually
+
+Portainer often can't access local build contexts. Build the image on your server first:
+
+```bash
+cd /path/to/vpro-cinema-plex
+docker build -t vpro-cinema:latest .
+```
+
+#### 2. Add the service to your stack
+
+```yaml
+vpro-cinema:
+  image: vpro-cinema:latest
+  pull_policy: never  # Use local image, don't pull from Docker Hub
+  container_name: vpro-cinema
+  restart: unless-stopped
+  ports:
+    - "5100:5100"  # Optional: expose for external testing
+  environment:
+    - TZ=Europe/Amsterdam
+    - TMDB_API_KEY=${TMDB_API_KEY:-}
+    - LOG_LEVEL=INFO
+  volumes:
+    - /path/to/vpro-cinema-plex/cache:/app/cache
+  networks:
+    - your-plex-network  # Must be on same network as Plex
+```
+
+#### 3. Configure Plex
+
+Use the container hostname for provider URLs:
+- Movies: `http://vpro-cinema:5100/movies`
+- Series: `http://vpro-cinema:5100/series`
+
+#### Rebuilding after updates
+
+```bash
+cd /path/to/vpro-cinema-plex
+git pull
+docker build -t vpro-cinema:latest .
+# Then redeploy the stack in Portainer
+```
+
+</details>
+
 ### 3. Verify it's running
 
 ```bash
