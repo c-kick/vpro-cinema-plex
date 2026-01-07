@@ -174,7 +174,7 @@ Examples:
         action="store_true",
         help="Force refresh of POMS API credentials"
     )
-    parser.add_argument("--version", action="version", version="%(prog)s 3.1.0")
+    parser.add_argument("--version", action="version", version="%(prog)s 3.1.1")
 
     args = parser.parse_args()
 
