@@ -2,15 +2,24 @@ FROM python:3.11-slim
 
 LABEL maintainer="Klaas (c_kick/hnldesign)"
 LABEL description="VPRO Cinema Metadata Provider for Plex"
-LABEL version="2.5.0"
+LABEL version="3.1.0"
 
 WORKDIR /app
 
 # Install dependencies
-RUN pip install --no-cache-dir flask requests beautifulsoup4
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application files
-COPY vpro_cinema_scraper.py vpro_metadata_provider.py ./
+# Copy all application modules
+COPY constants.py ./
+COPY credentials.py ./
+COPY cache.py ./
+COPY http_client.py ./
+COPY text_utils.py ./
+COPY logging_config.py ./
+COPY metrics.py ./
+COPY vpro_cinema_scraper.py ./
+COPY vpro_metadata_provider.py ./
 
 # Environment defaults
 ENV PORT=5100

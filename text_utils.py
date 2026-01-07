@@ -210,6 +210,69 @@ def sanitize_description(text: str) -> str:
 # Validation
 # =============================================================================
 
+def is_valid_description(description: str, min_length: int = 50) -> bool:
+    """
+    Validate that a description contains actual content, not login/error pages.
+
+    Detects common patterns that indicate scraped content is invalid:
+    - Login page text
+    - Error messages
+    - Access denied messages
+    - Very short content
+
+    Args:
+        description: Description text to validate
+        min_length: Minimum acceptable length (default: 50 chars)
+
+    Returns:
+        True if description appears to be valid content
+    """
+    if not description or len(description.strip()) < min_length:
+        return False
+
+    desc_lower = description.lower()
+
+    # Dutch login/error indicators
+    invalid_patterns_nl = [
+        'log in met',
+        'inloggen',
+        'gebruikersnaam en wachtwoord',
+        'u moet ingelogd zijn',
+        'toegang geweigerd',
+        'geen toegang',
+        'pagina niet gevonden',
+        'sessie verlopen',
+        'deze pagina is niet beschikbaar',
+    ]
+
+    # English login/error indicators
+    invalid_patterns_en = [
+        'please log in',
+        'sign in to',
+        'login required',
+        'access denied',
+        'page not found',
+        'session expired',
+        'unauthorized',
+        '403 forbidden',
+        '401 unauthorized',
+        '404 not found',
+    ]
+
+    all_patterns = invalid_patterns_nl + invalid_patterns_en
+
+    for pattern in all_patterns:
+        if pattern in desc_lower:
+            return False
+
+    # If description is mostly a single short sentence, it's probably not content
+    words = description.split()
+    if len(words) < 10:
+        return False
+
+    return True
+
+
 def validate_rating_key(key: str) -> bool:
     """
     Validate rating key format to prevent path traversal and injection.

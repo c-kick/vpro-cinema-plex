@@ -27,8 +27,10 @@ Environment Variables:
 
 import os
 import re
+import json
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from flask import Flask, request, jsonify, g
@@ -71,9 +73,65 @@ logger = logging.getLogger(__name__)
 # Initialize cache
 cache = FileCache(CACHE_DIR)
 
+# Match request log for troubleshooting
+MATCH_LOG_FILE = Path(CACHE_DIR) / "match_requests.jsonl"
+MAX_MATCH_LOG_ENTRIES = 1000  # Rotate after this many entries
+
 # Flask app
 app = Flask(__name__)
 setup_flask_request_id(app)
+
+
+# =============================================================================
+# Match Request Logging
+# =============================================================================
+
+def log_match_request(
+    raw_data: dict,
+    title: str,
+    year: Optional[int],
+    imdb_id: Optional[str],
+    media_type: str,
+    rating_key: str,
+    filename: str = "",
+    guid: str = "",
+):
+    """
+    Log match request for troubleshooting mismatches.
+
+    Writes to JSONL file with automatic rotation.
+    """
+    entry = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "title": title,
+        "year": year,
+        "imdb_id": imdb_id,
+        "media_type": media_type,
+        "rating_key": rating_key,
+        "filename": filename,
+        "guid": guid,
+    }
+
+    try:
+        # Ensure directory exists
+        MATCH_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+        # Rotate if too large
+        if MATCH_LOG_FILE.exists():
+            line_count = sum(1 for _ in open(MATCH_LOG_FILE, 'r', encoding='utf-8'))
+            if line_count >= MAX_MATCH_LOG_ENTRIES:
+                # Keep last half of entries
+                with open(MATCH_LOG_FILE, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                with open(MATCH_LOG_FILE, 'w', encoding='utf-8') as f:
+                    f.writelines(lines[len(lines) // 2:])
+
+        # Append new entry
+        with open(MATCH_LOG_FILE, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+
+    except Exception as e:
+        logger.warning(f"Failed to log match request: {e}")
 
 
 # =============================================================================
@@ -301,20 +359,26 @@ def handle_metadata_request(req: MetadataRequest) -> dict:
 
     # Build and cache result
     if film and film.description:
+        # Use discovered_imdb if no original imdb_id was provided
+        effective_imdb = film.imdb_id or film.discovered_imdb
         entry = CacheEntry(
             title=film.title,
             year=film.year,
             description=sanitize_description(film.description),
             url=film.url,
-            imdb_id=film.imdb_id,
+            imdb_id=effective_imdb,
             vpro_id=film.vpro_id,
             media_type=film.media_type,
             status=CacheStatus.FOUND.value,
             fetched_at="",
             last_accessed="",
+            lookup_method=film.lookup_method,
+            # Only store discovered_imdb if it differs from the effective imdb_id
+            discovered_imdb=film.discovered_imdb if film.discovered_imdb and film.discovered_imdb != film.imdb_id else None,
         )
         cache.write(req.rating_key, entry)
-        logger.info(f"Found: {film.title} ({film.year}) [{film.media_type}] - {len(film.description)} chars")
+        lookup_info = f" via {film.lookup_method}" if film.lookup_method else ""
+        logger.info(f"Found: {film.title} ({film.year}) [{film.media_type}] - {len(film.description)} chars{lookup_info}")
         metrics.inc("vpro_found")
     else:
         entry = CacheEntry(
@@ -328,6 +392,8 @@ def handle_metadata_request(req: MetadataRequest) -> dict:
             status=CacheStatus.NOT_FOUND.value,
             fetched_at="",
             last_accessed="",
+            lookup_method=None,
+            discovered_imdb=None,
         )
         cache.write(req.rating_key, entry)
         logger.info(f"Not found: {title} ({year}) - omitting summary for fallback")
@@ -432,11 +498,16 @@ def parse_match_data(data: dict, provider_type: str) -> MatchRequest:
             pass
 
     # Extract IMDB from guid first, then filename
+    logger.debug(f"parse_match_data: guid='{guid}', filename='{filename}'")
     imdb_id = extract_imdb_from_text(guid)
-    if not imdb_id:
+    if imdb_id:
+        logger.debug(f"Extracted IMDB {imdb_id} from guid")
+    else:
         imdb_id = extract_imdb_from_text(filename)
         if imdb_id:
             logger.debug(f"Extracted IMDB {imdb_id} from filename")
+        else:
+            logger.debug("No IMDB ID found in guid or filename")
 
     # Extract year from filename if not provided
     if not year and filename:
@@ -627,12 +698,39 @@ def match_metadata():
     data = request.get_json() or {}
     metadata_type = data.get('type', 1)
 
+    # Log raw request data for debugging
+    logger.debug(f"Match request raw data: {data}")
+
     # Seasons and Episodes - delegate to secondary provider
     if metadata_type in (3, 4):
         logger.info(f"Season/Episode match request (type {metadata_type}) - delegating")
         return jsonify(_build_empty_response(PROVIDER_IDENTIFIER))
 
     match_req = parse_match_data(data, "movie")
+
+    # Extract filename for logging
+    filename = data.get('filename', '')
+    if not filename:
+        media = data.get('Media', [])
+        if media:
+            try:
+                filename = media[0].get('Part', [{}])[0].get('file', '')
+            except (IndexError, KeyError, TypeError):
+                pass
+
+    # Log match request for troubleshooting
+    rating_key = generate_rating_key(match_req.title, match_req.year, match_req.imdb_id, match_req.media_type)
+    log_match_request(
+        raw_data=data,
+        title=match_req.title,
+        year=match_req.year,
+        imdb_id=match_req.imdb_id,
+        media_type=match_req.media_type,
+        rating_key=rating_key,
+        filename=filename,
+        guid=data.get('guid', ''),
+    )
+
     return jsonify(handle_match_request(match_req))
 
 
@@ -679,6 +777,30 @@ def match_metadata_tv():
         return jsonify(_build_empty_response(PROVIDER_IDENTIFIER_TV))
 
     match_req = parse_match_data(data, "tv")
+
+    # Extract filename for logging
+    filename = data.get('filename', '')
+    if not filename:
+        media = data.get('Media', [])
+        if media:
+            try:
+                filename = media[0].get('Part', [{}])[0].get('file', '')
+            except (IndexError, KeyError, TypeError):
+                pass
+
+    # Log match request for troubleshooting
+    rating_key = generate_rating_key(match_req.title, match_req.year, match_req.imdb_id, match_req.media_type)
+    log_match_request(
+        raw_data=data,
+        title=match_req.title,
+        year=match_req.year,
+        imdb_id=match_req.imdb_id,
+        media_type=match_req.media_type,
+        rating_key=rating_key,
+        filename=filename,
+        guid=data.get('guid', ''),
+    )
+
     return jsonify(handle_match_request(match_req))
 
 
