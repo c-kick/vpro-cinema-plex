@@ -612,6 +612,7 @@ def search_poms_api(
     director: Optional[str] = None,
     media_type: str = "all",
     session: RateLimitedSession = None,
+    imdb_id: Optional[str] = None,
 ) -> Optional[VPROFilm]:
     """
     Search VPRO using POMS API only.
@@ -622,6 +623,8 @@ def search_poms_api(
         director: Optional director for disambiguation
         media_type: "film", "series", or "all"
         session: Optional shared session
+        imdb_id: Optional IMDB ID - when provided, requires stricter matching
+                 (disables fuzzy "top result" fallback)
 
     Returns:
         VPROFilm if found, None otherwise
@@ -667,22 +670,30 @@ def search_poms_api(
                 return film
 
         # Validate top result by similarity
-        best = films[0]
-        similarity = title_similarity(title, best.title)
-        year_diff = abs(best.year - year) if (best.year and year) else 0
-
-        if year and year_diff > YEAR_TOLERANCE:
+        # When IMDB ID is provided, we know exactly what we're looking for,
+        # so skip the fuzzy "top result" fallback to avoid mismatches
+        if imdb_id:
             logger.debug(
-                f"POMS: Rejecting '{best.title}' ({best.year}) - year diff {year_diff}"
-            )
-        elif similarity < TITLE_SIMILARITY_THRESHOLD:
-            logger.debug(
-                f"POMS: Rejecting '{best.title}' - low similarity {similarity:.0%}"
+                f"POMS: Skipping fuzzy fallback - IMDB ID provided, "
+                f"no exact match for '{title}'"
             )
         else:
-            logger.info(f"POMS: Using top result - {best.title} ({best.year})")
-            metrics.inc("poms_matches", labels={"type": "fuzzy"})
-            return best
+            best = films[0]
+            similarity = title_similarity(title, best.title)
+            year_diff = abs(best.year - year) if (best.year and year) else 0
+
+            if year and year_diff > YEAR_TOLERANCE:
+                logger.debug(
+                    f"POMS: Rejecting '{best.title}' ({best.year}) - year diff {year_diff}"
+                )
+            elif similarity < TITLE_SIMILARITY_THRESHOLD:
+                logger.debug(
+                    f"POMS: Rejecting '{best.title}' - low similarity {similarity:.0%}"
+                )
+            else:
+                logger.info(f"POMS: Using top result - {best.title} ({best.year})")
+                metrics.inc("poms_matches", labels={"type": "fuzzy"})
+                return best
 
     except Exception as e:
         logger.error(f"POMS API error: {e}")
