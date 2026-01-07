@@ -95,7 +95,8 @@ jobs:
           from text_utils import normalize_for_comparison, validate_rating_key
           from logging_config import configure_logging
           from metrics import metrics
-          from vpro_cinema_scraper import VPROFilm, get_vpro_description
+          from vpro_lookup import get_vpro_description
+          from models import VPROFilm
           from vpro_metadata_provider import app, generate_rating_key, parse_rating_key
           print('All modules imported successfully')
           print(f'Version: {PROVIDER_VERSION}')
