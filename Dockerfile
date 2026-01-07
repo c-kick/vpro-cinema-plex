@@ -18,7 +18,10 @@ COPY http_client.py ./
 COPY text_utils.py ./
 COPY logging_config.py ./
 COPY metrics.py ./
-COPY vpro_cinema_scraper.py ./
+COPY models.py ./
+COPY vpro_scraper.py ./
+COPY poms_client.py ./
+COPY vpro_lookup.py ./
 COPY vpro_metadata_provider.py ./
 
 # Environment defaults
