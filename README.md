@@ -46,7 +46,7 @@ technically a bit dodgy and may break at any time. Though it has been working ex
   English title. With a TMDB API key, the provider automatically discovers and tries alternate titles in both directions:
 
   - **English → Original**: "Downfall" → "Der Untergang" (via IMDB ID from Plex)
-  - **Original → English**: "L'Enfer" → "Torment" (via TMDB title search)
+  - **Original → English**: "Der Untergang" → "Downfall" (via TMDB title search)
 
   Get your free API key at: https://www.themoviedb.org/settings/api
 
