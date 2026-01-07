@@ -55,7 +55,7 @@ from text_utils import (
 )
 from logging_config import configure_logging, setup_flask_request_id, get_request_id
 from metrics import metrics
-from vpro_cinema_scraper import get_vpro_description
+from vpro_lookup import get_vpro_description
 
 # =============================================================================
 # Configuration
