@@ -238,7 +238,7 @@ class MetadataRequest:
     @property
     def base_path(self) -> str:
         """Get base URL path based on type."""
-        return "/tv" if self.provider_type == "tv" else ""
+        return "/series" if self.provider_type == "tv" else "/movies"
 
 
 def _build_metadata_response(
@@ -380,26 +380,13 @@ def handle_metadata_request(req: MetadataRequest) -> dict:
         lookup_info = f" via {film.lookup_method}" if film.lookup_method else ""
         logger.info(f"Found: {film.title} ({film.year}) [{film.media_type}] - {len(film.description)} chars{lookup_info}")
         metrics.inc("vpro_found")
+        return _build_metadata_response(req, entry)
     else:
-        entry = CacheEntry(
-            title=title,
-            year=year,
-            description=None,
-            url=None,
-            imdb_id=imdb_id,
-            vpro_id=None,
-            media_type=media_type,
-            status=CacheStatus.NOT_FOUND.value,
-            fetched_at="",
-            last_accessed="",
-            lookup_method=None,
-            discovered_imdb=None,
-        )
-        cache.write(req.rating_key, entry)
+        # Don't cache not-found results - retry on every request
+        # This ensures newly added VPRO content is found immediately
         logger.info(f"Not found: {title} ({year}) - omitting summary for fallback")
         metrics.inc("vpro_not_found")
-
-    return _build_metadata_response(req, entry)
+        return _build_empty_response(req.identifier)
 
 
 # =============================================================================
@@ -421,7 +408,7 @@ class MatchRequest:
 
     @property
     def base_path(self) -> str:
-        return "/tv" if self.provider_type == "tv" else ""
+        return "/series" if self.provider_type == "tv" else "/movies"
 
 
 def handle_match_request(req: MatchRequest) -> dict:
@@ -641,7 +628,7 @@ def cache_clear():
 # Provider Root Endpoints
 # =============================================================================
 
-@app.route('/', methods=['GET'])
+@app.route('/movies', methods=['GET'])
 def provider_root():
     """Return provider information for MOVIES."""
     return jsonify({
@@ -660,7 +647,7 @@ def provider_root():
     })
 
 
-@app.route('/tv', methods=['GET'])
+@app.route('/series', methods=['GET'])
 def provider_root_tv():
     """Return provider information for TV SHOWS."""
     return jsonify({
@@ -685,14 +672,14 @@ def provider_root_tv():
 # Movie Endpoints
 # =============================================================================
 
-@app.route('/library/metadata/<rating_key>', methods=['GET'])
+@app.route('/movies/library/metadata/<rating_key>', methods=['GET'])
 def get_metadata(rating_key: str):
     """Get metadata for a movie by its rating key."""
     req = MetadataRequest(rating_key=rating_key, provider_type="movie")
     return jsonify(handle_metadata_request(req))
 
 
-@app.route('/library/metadata/matches', methods=['POST'])
+@app.route('/movies/library/metadata/matches', methods=['POST'])
 def match_metadata():
     """Match movie content based on hints from Plex."""
     data = request.get_json() or {}
@@ -734,7 +721,7 @@ def match_metadata():
     return jsonify(handle_match_request(match_req))
 
 
-@app.route('/library/metadata/<rating_key>/images', methods=['GET'])
+@app.route('/movies/library/metadata/<rating_key>/images', methods=['GET'])
 def get_images(rating_key: str):
     """Return empty - VPRO doesn't provide artwork."""
     return jsonify({
@@ -748,7 +735,7 @@ def get_images(rating_key: str):
     })
 
 
-@app.route('/library/metadata/<rating_key>/extras', methods=['GET'])
+@app.route('/movies/library/metadata/<rating_key>/extras', methods=['GET'])
 def get_extras(rating_key: str):
     """Return empty - no extras."""
     return jsonify(_build_empty_response(PROVIDER_IDENTIFIER))
@@ -758,14 +745,14 @@ def get_extras(rating_key: str):
 # TV Endpoints
 # =============================================================================
 
-@app.route('/tv/library/metadata/<rating_key>', methods=['GET'])
+@app.route('/series/library/metadata/<rating_key>', methods=['GET'])
 def get_metadata_tv(rating_key: str):
     """Get metadata for a TV show by its rating key."""
     req = MetadataRequest(rating_key=rating_key, provider_type="tv")
     return jsonify(handle_metadata_request(req))
 
 
-@app.route('/tv/library/metadata/matches', methods=['POST'])
+@app.route('/series/library/metadata/matches', methods=['POST'])
 def match_metadata_tv():
     """Match TV content based on hints from Plex."""
     data = request.get_json() or {}
@@ -804,7 +791,7 @@ def match_metadata_tv():
     return jsonify(handle_match_request(match_req))
 
 
-@app.route('/tv/library/metadata/<rating_key>/images', methods=['GET'])
+@app.route('/series/library/metadata/<rating_key>/images', methods=['GET'])
 def get_images_tv(rating_key: str):
     """Return empty - VPRO doesn't provide artwork."""
     return jsonify({
@@ -818,7 +805,7 @@ def get_images_tv(rating_key: str):
     })
 
 
-@app.route('/tv/library/metadata/<rating_key>/extras', methods=['GET'])
+@app.route('/series/library/metadata/<rating_key>/extras', methods=['GET'])
 def get_extras_tv(rating_key: str):
     """Return empty - no extras."""
     return jsonify(_build_empty_response(PROVIDER_IDENTIFIER_TV))

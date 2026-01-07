@@ -60,8 +60,8 @@ class CacheStatus(str, Enum):
 
 PROVIDER_IDENTIFIER: Final = "tv.plex.agents.custom.vpro.cinema"
 PROVIDER_IDENTIFIER_TV: Final = "tv.plex.agents.custom.vpro.cinema.tv"
-PROVIDER_TITLE: Final = "VPRO Cinema (Dutch Summaries)"
-PROVIDER_TITLE_TV: Final = "VPRO Cinema TV (Dutch Summaries)"
+PROVIDER_TITLE: Final = "VPRO Cinema (Dutch Summaries) - Movies"
+PROVIDER_TITLE_TV: Final = "VPRO Cinema (Dutch Summaries) - Series"
 PROVIDER_VERSION: Final = "3.1.0"
 
 
@@ -70,7 +70,6 @@ PROVIDER_VERSION: Final = "3.1.0"
 # =============================================================================
 
 DEFAULT_CACHE_TTL_FOUND: Final = 30 * 24 * 60 * 60  # 30 days for found entries
-DEFAULT_CACHE_TTL_NOT_FOUND: Final = 7 * 24 * 60 * 60  # 7 days for not-found
 MAX_CACHE_SIZE_MB: Final = 500  # Maximum cache size in MB
 MAX_CACHE_ENTRIES: Final = 10000  # Maximum number of cached items
 
