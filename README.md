@@ -111,7 +111,7 @@ Custom Metadata Provider API to allow combining with secondary providers like "P
 
 You should now see both "VPRO Cinema (Dutch Summaries) - Movies" and "VPRO Cinema (Dutch Summaries) - Series" in the providers list.
 
-<img width="601" height="290" alt="image" src="https://github.com/user-attachments/assets/e0026224-c13b-4f7c-a5a0-a6c6ca4e206a" />
+<img width="1017" height="475" alt="image" src="https://github.com/user-attachments/assets/a0b4fbd4-ef0f-4ad7-a12b-15b724fa7faa" />
 
 #### Create a Movie Agent
 
@@ -122,7 +122,7 @@ You should now see both "VPRO Cinema (Dutch Summaries) - Movies" and "VPRO Cinem
 11. Optionally add "Plex Local Media" from the dropdown (don't forget to click the **+** button)
 12. Click **Save**
 
-<img width="499" height="647" alt="image" src="https://github.com/user-attachments/assets/b04bf7c6-b261-42f0-8a35-18c34fa1a3e1" />
+<img width="485" height="658" alt="image" src="https://github.com/user-attachments/assets/06040d4c-2d8a-41a2-95a1-1ac9a9aa25c4" />
 
 #### Create a TV Show Agent
 
@@ -133,7 +133,7 @@ You should now see both "VPRO Cinema (Dutch Summaries) - Movies" and "VPRO Cinem
 17. Optionally add "Plex Local Media" (don't forget to click the **+** button)
 18. Click **Save**
 
-<img width="497" height="645" alt="image" src="https://github.com/user-attachments/assets/c8f07c1d-e07e-4859-b2b6-85d15aa443bc" />
+<img width="486" height="633" alt="image" src="https://github.com/user-attachments/assets/2e3e64b7-b946-4ac2-92f5-ad327b6abb56" />
 
 Done! The agents are now configured to first search for Dutch summaries on VPRO Cinema, falling back to Plex
 Movie/Series for remaining metadata (artwork, cast, etc.).
