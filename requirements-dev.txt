@@ -1,0 +1,22 @@
+# VPRO Cinema Plex Provider - Development Dependencies
+
+# Include production dependencies
+-r requirements.txt
+
+# Testing
+pytest==7.4.3
+pytest-cov==4.1.0
+responses==0.24.1  # Mock HTTP requests
+freezegun==1.2.2   # Mock time/dates
+
+# Linting and formatting
+ruff==0.1.6
+mypy==1.7.0
+
+# Type stubs
+types-requests==2.31.0.10
+types-beautifulsoup4==4.12.0.7
+
+# Security scanning
+safety==2.3.5
+bandit==1.7.6
