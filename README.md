@@ -1,8 +1,8 @@
 # VPRO Cinema Metadata Provider for Plex
 
-![Example of the Metadata Provider in action!](https://github.com/user-attachments/assets/002b61b3-c05c-4888-a1c6-c34bf38d6dd1)
-
 A custom metadata provider that supplies Dutch film and TV series descriptions from [VPRO Cinema](https://www.vprogids.nl/cinema/) to Plex Media Server.
+
+![Example of the Metadata Provider in action!](https://github.com/user-attachments/assets/002b61b3-c05c-4888-a1c6-c34bf38d6dd1)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
@@ -22,7 +22,7 @@ A custom metadata provider that supplies Dutch film and TV series descriptions f
 
 ## Background
 
-For years I wanted to automatically pull the excellent Dutch film reviews from VPRO Cinema into Plex. I made several
+For years I wanted to automatically pull the excellent Dutch film reviews from [VPRO Cinema](https://www.vprogids.nl/cinema/) into Plex. I made several
 attempts over the years, but without an official NPO API, I never got it to work. After getting tired of manually
 copying descriptions into Plex — only to have them overwritten by the next metadata refresh — I teamed up with Claude to
 build a proper solution. After some experimentation (first with scraping, then reverse-engineering the NPO's internal
