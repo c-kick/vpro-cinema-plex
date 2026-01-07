@@ -22,7 +22,6 @@ from typing import Optional, Dict, Any, List
 
 from constants import (
     DEFAULT_CACHE_TTL_FOUND,
-    DEFAULT_CACHE_TTL_NOT_FOUND,
     MAX_CACHE_SIZE_MB,
     MAX_CACHE_ENTRIES,
     CacheStatus,
@@ -78,9 +77,8 @@ class CacheEntry:
             )
             age_seconds = (datetime.now(timezone.utc) - fetched).total_seconds()
 
-            # Found entries get longer TTL
-            ttl = DEFAULT_CACHE_TTL_FOUND if self.description else DEFAULT_CACHE_TTL_NOT_FOUND
-            return age_seconds > ttl
+            # Only found entries are cached (not-found entries are not stored)
+            return age_seconds > DEFAULT_CACHE_TTL_FOUND
 
         except (ValueError, AttributeError):
             return True  # Invalid timestamp = expired
@@ -208,6 +206,60 @@ class FileCache:
                 # Lock not available, proceed anyway
                 pass
 
+    def _find_by_title_year(self, key: str) -> Path:
+        """
+        Find cache entry by title+year when IMDB is 'none'.
+
+        Searches for any cached file matching the title-year pattern,
+        regardless of IMDB ID. This handles cases where Plex sends a
+        request without IMDB but we have a cached entry with IMDB.
+
+        Args:
+            key: Cache key like 'vpro-die-hard-1988-none-m'
+
+        Returns:
+            Path to matching cache file, or non-existent Path if not found
+        """
+        # Extract title-year prefix: "vpro-die-hard-1988" from "vpro-die-hard-1988-none-m"
+        # Key format: vpro-{title}-{year}-{imdb}-{type}
+        parts = key.rsplit("-", 2)  # Split from right: [..., 'none', 'm'] or [..., 'none']
+        if len(parts) < 2:
+            logger.debug(f"Cache fallback: key '{key}' has insufficient parts")
+            return Path("/nonexistent")
+
+        # Get the prefix before the IMDB part
+        if parts[-1] in ("m", "s"):
+            # Has type suffix: vpro-title-year-none-m
+            title_year_prefix = parts[0]  # "vpro-die-hard-1988"
+            type_suffix = parts[-1]
+        else:
+            # No type suffix: vpro-title-year-none
+            title_year_prefix = key.rsplit("-none", 1)[0]
+            type_suffix = "m"  # Default to movie
+
+        logger.debug(f"Cache fallback search: prefix='{title_year_prefix}', type='{type_suffix}'")
+
+        # Search all shards for matching files
+        try:
+            shard_count = 0
+            file_count = 0
+            for shard in self._cache_dir.iterdir():
+                if not shard.is_dir() or len(shard.name) != 2:
+                    continue
+                shard_count += 1
+                for cache_file in shard.glob("*.json"):
+                    file_count += 1
+                    filename = cache_file.stem
+                    # Check if filename starts with title-year and ends with type
+                    if filename.startswith(title_year_prefix) and f"-{type_suffix}_" in filename:
+                        logger.info(f"Cache fallback HIT: {key} -> {filename}")
+                        return cache_file
+            logger.debug(f"Cache fallback: searched {shard_count} shards, {file_count} files, no match")
+        except OSError as e:
+            logger.warning(f"Cache fallback error: {e}")
+
+        return Path("/nonexistent")
+
     def _unlock_file(self, file_handle) -> None:
         """Release file lock if available."""
         if HAS_FCNTL:
@@ -221,6 +273,9 @@ class FileCache:
         Read entry from cache.
 
         Checks TTL and returns None if expired or not found.
+        Supports backward compatibility for:
+        - Old keys without -m/-s suffix
+        - Keys with 'none' IMDB that may be cached with actual IMDB
 
         Args:
             key: Cache key
@@ -229,6 +284,14 @@ class FileCache:
             CacheEntry if found and valid, None otherwise
         """
         cache_path = self._get_cache_path(key)
+
+        # Backward compatibility: if key doesn't have type suffix, try with -m
+        if not cache_path.exists() and not (key.endswith("-m") or key.endswith("-s")):
+            cache_path = self._get_cache_path(key + "-m")
+
+        # Fallback: if key has 'none' for IMDB, search for matching title+year with any IMDB
+        if not cache_path.exists() and ("-none-" in key or key.endswith("-none")):
+            cache_path = self._find_by_title_year(key)
 
         if not cache_path.exists():
             return None

@@ -14,7 +14,7 @@ A custom metadata provider that supplies Dutch film and TV series descriptions f
 - 🇳🇱 Dutch film and TV series reviews/descriptions from VPRO Cinema's database
 - 📺 Supports both movies and TV series
 - 🔍 Direct NPO POMS API access with automatic credential refresh
-- 🌍 TMDB alternate title lookup (enables matching titles in other languages)
+- 🌍 Smart title matching via TMDB — works in both directions (Translated → Original and Original → Translated)
 - 💾 Persistent caching with TTL for not-found entries
 - 🔧 Self-healing: auto-refreshes API credentials if authentication fails
 - 🐳 Docker-ready with health checks
@@ -40,11 +40,13 @@ technically a bit dodgy and may break at any time. Though it has been working ex
 
 ### Recommended
 
-- **TMDB API Key** — Enables automatic alternate language title lookup
+- **TMDB API Key** — Enables smart alternate title lookup
 
   Many films are indexed in VPRO Cinema under their original (often French, German, or Dutch) title rather than the
-  English title. Without a TMDB API key, searching for "Downfall" will fail, but with it, the provider automatically
-  discovers and tries "Der Untergang".
+  English title. With a TMDB API key, the provider automatically discovers and tries alternate titles in both directions:
+
+  - **English → Original**: "Downfall" → "Der Untergang" (via IMDB ID from Plex)
+  - **Original → English**: "L'Enfer" → "Torment" (via TMDB title search)
 
   Get your free API key at: https://www.themoviedb.org/settings/api
 
@@ -97,17 +99,17 @@ Custom Metadata Provider API to allow combining with secondary providers like "P
 
 | Endpoint | Provider Name | Use For |
 |----------|---------------|---------|
-| `http://localhost:5100/` | VPRO Cinema (Dutch Summaries) | Movies |
-| `http://localhost:5100/tv` | VPRO Cinema TV (Dutch Summaries) | TV Shows |
+| `http://localhost:5100/movies` | VPRO Cinema (Dutch Summaries) - Movies | Movies |
+| `http://localhost:5100/series` | VPRO Cinema (Dutch Summaries) - Series | TV Shows |
 
 1. Log into the Plex web interface
 2. Go to **Settings** → **Metadata Agents** (not the legacy one!)
 3. Under *Metadata Providers* click **+ Add Provider**
-4. Paste the **movie provider URL**: `http://localhost:5100/` and click **Save**
+4. Paste the **movie provider URL**: `http://localhost:5100/movies` and click **Save**
 5. Click **+ Add Provider** again
-6. Paste the **TV provider URL**: `http://localhost:5100/tv` and click **Save**
+6. Paste the **TV provider URL**: `http://localhost:5100/series` and click **Save**
 
-You should now see both "VPRO Cinema (Dutch Summaries)" and "VPRO Cinema TV (Dutch Summaries)" in the providers list.
+You should now see both "VPRO Cinema (Dutch Summaries) - Movies" and "VPRO Cinema (Dutch Summaries) - Series" in the providers list.
 
 <img width="601" height="290" alt="image" src="https://github.com/user-attachments/assets/e0026224-c13b-4f7c-a5a0-a6c6ca4e206a" />
 
@@ -115,7 +117,7 @@ You should now see both "VPRO Cinema (Dutch Summaries)" and "VPRO Cinema TV (Dut
 
 7. Under *Metadata Agents* click **+ Add Agent**
 8. Give the agent a title, example: "VPRO + Plex Movie"
-9. Select `VPRO Cinema (Dutch Summaries)` as the primary metadata provider
+9. Select `VPRO Cinema (Dutch Summaries) - Movies` as the primary metadata provider
 10. A section 'additional providers' appears, pick "Plex Movie" and click the **+** button
 11. Optionally add "Plex Local Media" from the dropdown (don't forget to click the **+** button)
 12. Click **Save**
@@ -125,8 +127,8 @@ You should now see both "VPRO Cinema (Dutch Summaries)" and "VPRO Cinema TV (Dut
 #### Create a TV Show Agent
 
 13. Under *Metadata Agents* click **+ Add Agent** again
-14. Give the agent a title, example: "VPRO TV + Plex Series"
-15. Select `VPRO Cinema TV (Dutch Summaries)` as the primary metadata provider
+14. Give the agent a title, example: "VPRO + Plex Series"
+15. Select `VPRO Cinema (Dutch Summaries) - Series` as the primary metadata provider
 16. Pick "Plex Series" and click the **+** button
 17. Optionally add "Plex Local Media" (don't forget to click the **+** button)
 18. Click **Save**
@@ -143,7 +145,7 @@ Movie/Series for remaining metadata (artwork, cast, etc.).
 3. Go to **Advanced** tab
 4. Under **Agent**, select the movie agent you created ("VPRO + Plex Movie")
 5. Click **Save Changes**
-6. Repeat for your TV show library, selecting the TV show agent ("VPRO TV + Plex Series")
+6. Repeat for your TV show library, selecting the TV show agent ("VPRO + Plex Series")
 
 ### 6. Refresh metadata
 
@@ -155,7 +157,7 @@ New movies and TV shows will automatically use the provider on scan.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  Plex requests metadata for "Downfall" (2004)             │
+│  Plex requests metadata for "Downfall" (2004)                   │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -168,9 +170,10 @@ New movies and TV shows will automatically use the provider on scan.
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  2. TMDB Alternate Titles (requires TMDB_API_KEY + IMDB ID)     │
-│     └─ Fetches French/Dutch/German titles, retries search       │
-│     └─ "Downfall" → "Der Untergang" → Found!           │
+│  2. TMDB Alternate Titles (requires TMDB_API_KEY)               │
+│     └─ With IMDB ID: fetch alternate titles directly            │
+│     └─ Without IMDB ID: search TMDB by title+year first         │
+│     └─ "Downfall" → "Der Untergang" → Found!                    │
 └─────────────────────────────────────────────────────────────────┘
                               │
                       Still no match?
@@ -186,22 +189,22 @@ New movies and TV shows will automatically use the provider on scan.
 
 ### Test searches directly
 
-> **Note:** The CLI scraper (`vpro_cinema_scraper.py`) does not cache results (in `cache/`) — it only searches and
-> returns data. Caching is handled by the HTTP provider (`vpro_metadata_provider.py`). To test with caching, use the HTTP
-`/library/metadata` endpoints below.
+> **Note:** The CLI tool (`vpro_lookup.py`) does not cache results — it only searches and returns data. Caching is
+> handled by the HTTP provider (`vpro_metadata_provider.py`). To test with caching, use the HTTP `/library/metadata`
+> endpoints below.
 
 ```bash
 # Basic search (searches both films and series by default)
-docker exec vpro-plex-provider python vpro_cinema_scraper.py "Apocalypse Now" --year 1979
+docker exec vpro-plex-provider python vpro_lookup.py "Apocalypse Now" --year 1979
 
 # Search for TV series only
-docker exec vpro-plex-provider python vpro_cinema_scraper.py "Adolescence" --year 2025 --type series
+docker exec vpro-plex-provider python vpro_lookup.py "Adolescence" --year 2025 --type series
 
 # Search for films only
-docker exec vpro-plex-provider python vpro_cinema_scraper.py "Downfall" --year 2004 --type film
+docker exec vpro-plex-provider python vpro_lookup.py "Downfall" --year 2004 --type film
 
 # With IMDB ID (enables TMDB alternate title lookup) in verbose mode (showing full search flow)
-docker exec vpro-plex-provider python vpro_cinema_scraper.py "Downfall" --year 2004 --imdb tt0363163 -v
+docker exec vpro-plex-provider python vpro_lookup.py "Downfall" --year 2004 --imdb tt0363163 -v
 ```
 
 Example output:
@@ -211,15 +214,15 @@ Searching VPRO Cinema for: Downfall (2004)
 ------------------------------------------------------------
 Searching VPRO: 'Downfall' (2004) [tt0363163]
 POMS: Rejecting title match 'Downfall' (1964) - year diff 40
-POMS: Rejecting 'Downfall' (1964) - year diff 40
-No POMS match for 'Downfall' - fetching alternate titles from TMDB...
-TMDB alternate titles for tt0363163: ['Der Untergang', 'A Queda! As Últimas Horas de Hitler', '몰락 - 히틀러와 제3제국의 종말', 'Undergången - Hitler och Tredje Rikets fall', 'Der Untergang - det tredje rikets siste dager']
+No POMS match for 'Downfall' - fetching alternate titles by IMDB...
+TMDB alternate titles for tt0363163: ['Der Untergang', 'A Queda!', '몰락', ...]
 Trying alternate title: 'Der Untergang'
 POMS: Exact match - Der Untergang (2004)
 Found via alternate title 'Der Untergang': Der Untergang
 
-✓ Found: Der Untergang
+Found (Film): Der Untergang
   Year: 2004
+  Type: film
   Director: Oliver Hirschbiegel
   Rating: 8/10
   VPRO ID: 536405
@@ -227,7 +230,9 @@ Found via alternate title 'Der Untergang': Der Untergang
   Genres: Historische film, Oorlogsfilm, Drama
 
   Description (578 chars):
-  In Der Untergang - over de laatste dagen van de Führer - wordt nauwgezet in beeld gebracht hoe Hitler (een geniale Ganz) aanvankelijk nog aardige kantjes had, bijvoorbeeld voor zijn secretaresse Traudl Junge, op wier memoires de film is gebaseerd. Eenmaal in het nauw gedreven door de geallieerden wordt hij steeds open­­lijker onaangenaam. Hitler en zijn intieme kring worden neergezet als personen die geen gevoel (meer) hebben voor de rauwe werkelijkheid. Die de kijker overigens regelmatig te zie...
+  In Der Untergang - over de laatste dagen van de Führer - wordt nauwgezet
+  in beeld gebracht hoe Hitler (een geniale Ganz) aanvankelijk nog aardige
+  kantjes had, bijvoorbeeld voor zijn secretaresse Traudl Junge...
 ```
 
 ### Test via HTTP endpoints
@@ -255,14 +260,14 @@ The provider automatically refreshes POMS API credentials if authentication fail
 
 ```bash
 # Force refresh credentials from vprogids.nl
-docker exec vpro-plex-provider python vpro_cinema_scraper.py --refresh-credentials
+docker exec vpro-plex-provider python vpro_lookup.py --refresh-credentials
 
 # View cached credentials
 docker exec vpro-plex-provider cat cache/credentials.json
 
 # Simulate auth failure to test auto-refresh
 docker exec vpro-plex-provider sh -c 'echo "{\"api_key\":\"bad\",\"api_secret\":\"bad\"}" > cache/credentials.json'
-docker exec vpro-plex-provider python vpro_cinema_scraper.py "The Matrix" --year 1999 -v
+docker exec vpro-plex-provider python vpro_lookup.py "The Matrix" --year 1999 -v
 # Should show: "auth failed, refreshing credentials..."
 ```
 
@@ -305,25 +310,25 @@ docker logs -f vpro-plex-provider
 
 ## API Endpoints
 
-### Movie Provider (`/`)
+### Movie Provider (`/movies`)
 
-| Endpoint                         | Method | Description                                    |
-|----------------------------------|--------|------------------------------------------------|
-| `/`                              | GET    | Movie provider info (type 1)                   |
-| `/library/metadata/<key>`        | GET    | Plex metadata lookup for movies                |
-| `/library/metadata/matches`      | POST   | Plex match endpoint for movies                 |
-| `/library/metadata/<key>/images` | GET    | Returns empty (no artwork)                     |
-| `/library/metadata/<key>/extras` | GET    | Returns empty (no extras)                      |
+| Endpoint                              | Method | Description                                 |
+|---------------------------------------|--------|---------------------------------------------|
+| `/movies`                             | GET    | Movie provider info (type 1)                |
+| `/movies/library/metadata/<key>`      | GET    | Plex metadata lookup for movies             |
+| `/movies/library/metadata/matches`    | POST   | Plex match endpoint for movies              |
+| `/movies/library/metadata/<key>/images` | GET  | Returns empty (no artwork)                  |
+| `/movies/library/metadata/<key>/extras` | GET  | Returns empty (no extras)                   |
 
-### TV Provider (`/tv`)
+### TV Provider (`/series`)
 
-| Endpoint                            | Method | Description                                 |
-|-------------------------------------|--------|---------------------------------------------|
-| `/tv`                               | GET    | TV provider info (types 2, 3, 4)            |
-| `/tv/library/metadata/<key>`        | GET    | Plex metadata lookup for TV shows           |
-| `/tv/library/metadata/matches`      | POST   | Plex match endpoint for TV shows            |
-| `/tv/library/metadata/<key>/images` | GET    | Returns empty (no artwork)                  |
-| `/tv/library/metadata/<key>/extras` | GET    | Returns empty (no extras)                   |
+| Endpoint                               | Method | Description                                |
+|----------------------------------------|--------|--------------------------------------------|
+| `/series`                              | GET    | TV provider info (types 2, 3, 4)           |
+| `/series/library/metadata/<key>`       | GET    | Plex metadata lookup for TV shows          |
+| `/series/library/metadata/matches`     | POST   | Plex match endpoint for TV shows           |
+| `/series/library/metadata/<key>/images` | GET   | Returns empty (no artwork)                 |
+| `/series/library/metadata/<key>/extras` | GET   | Returns empty (no extras)                  |
 
 ### Shared Endpoints
 
@@ -341,10 +346,22 @@ vpro-cinema-plex/
 ├── docker-compose.yml          # Docker Compose config
 ├── Dockerfile                  # Container definition
 ├── env.example                 # Environment template (copy to .env)
-├── gitignore                   # Git ignore rules (rename to .gitignore)
 ├── requirements.txt            # Python dependencies
-├── vpro_cinema_scraper.py      # Core search/scrape logic (v3.0.0)
-├── vpro_metadata_provider.py   # Flask server for Plex (v3.0.0)
+│
+├── vpro_metadata_provider.py   # Flask HTTP server for Plex
+├── vpro_lookup.py              # Search orchestrator + CLI
+├── poms_client.py              # NPO POMS API + TMDB clients
+├── vpro_scraper.py             # Web search fallback + page scraper
+├── models.py                   # Shared data models (VPROFilm)
+│
+├── cache.py                    # Disk cache with sharding
+├── credentials.py              # POMS credential management
+├── http_client.py              # HTTP session factory
+├── text_utils.py               # Title matching utilities
+├── logging_config.py           # Logging configuration
+├── metrics.py                  # Simple metrics collection
+├── constants.py                # Shared constants
+│
 ├── LICENSE                     # MIT License
 └── README.md                   # This file
 ```
@@ -370,7 +387,7 @@ vpro-cinema-plex/
 
 1. Test if the film exists in VPRO's database:
    ```bash
-   docker exec vpro-plex-provider python vpro_cinema_scraper.py "FILM TITLE" --year YEAR -v
+   docker exec vpro-plex-provider python vpro_lookup.py "FILM TITLE" --year YEAR -v
    ```
 
 2. Check provider logs for errors:
@@ -395,7 +412,7 @@ applied, and Plex keeps trying on the old port.
 The provider auto-refreshes credentials, but you can force it:
 
 ```bash
-docker exec vpro-plex-provider python vpro_cinema_scraper.py --refresh-credentials
+docker exec vpro-plex-provider python vpro_lookup.py --refresh-credentials
 ```
 
 ### Search not finding films
@@ -404,13 +421,13 @@ Try with the original (non-English) title:
 
 ```bash
 # Instead of "Downfall", try:
-docker exec vpro-plex-provider python vpro_cinema_scraper.py "Der Untergang" --year 2004
+docker exec vpro-plex-provider python vpro_lookup.py "Der Untergang" --year 2004
 ```
 
 Or provide the IMDB ID for automatic alternate title lookup (requires TMDB_API_KEY):
 
 ```bash
-docker exec vpro-plex-provider python vpro_cinema_scraper.py "Downfall" --year 2004 --imdb tt0363163
+docker exec vpro-plex-provider python vpro_lookup.py "Downfall" --year 2004 --imdb tt0363163
 ```
 
 ### TMDB alternate titles not working
@@ -421,7 +438,8 @@ docker exec vpro-plex-provider python vpro_cinema_scraper.py "Downfall" --year 2
    # Check "tmdb_configured": true
    ```
 
-2. Ensure you're passing an IMDB ID — alternate title lookup requires it
+2. If you have an IMDB ID, pass it via `--imdb` for direct alternate title lookup. Without an IMDB ID, the
+   provider will search TMDB by title+year, which works but may be less accurate for ambiguous titles.
 
 ## Updating
 
@@ -463,18 +481,47 @@ docker-compose logs --tail=50
 
 - **Cache is preserved** — Your cached movie data and credentials remain intact during updates
 - **Configuration preserved** — Your `.env` file is not overwritten by `git pull`
-- **No Plex reconfiguration needed** — The provider URL stays the same, so Plex continues to work without changes
+- **Check release notes** — Some updates may require Plex reconfiguration (see upgrade sections below)
 
-### Upgrading to v3.0.0 (TV series support)
+### Upgrading to v3.1.0
 
-Version 3.0.0 introduces TV series support with a **two-provider architecture**:
+Version 3.1.0 includes **breaking URL changes** — you must re-register providers in Plex:
+
+**URL Changes:**
+| Old URL | New URL |
+|---------|---------|
+| `http://localhost:5100/` | `http://localhost:5100/movies` |
+| `http://localhost:5100/tv` | `http://localhost:5100/series` |
+
+**Provider Name Changes:**
+| Old Name | New Name |
+|----------|----------|
+| VPRO Cinema (Dutch Summaries) | VPRO Cinema (Dutch Summaries) - Movies |
+| VPRO Cinema TV (Dutch Summaries) | VPRO Cinema (Dutch Summaries) - Series |
+
+**Migration steps:**
+1. Remove old provider URLs in Plex Settings → Metadata Agents → Metadata Providers
+2. Add new URLs: `/movies` for films, `/series` for TV shows
+3. Update your agents to use the new provider names
+4. Restart Plex if metadata requests fail (known Plex bug with URL changes)
+
+**Other improvements in v3.1.0:**
+- Bidirectional TMDB lookup (finds alternate titles even without IMDB ID)
+- Modular codebase for better maintainability
+- Enhanced cache diagnostics
+
+Your cache and `.env` configuration are preserved.
+
+### Upgrading from v2.x to v3.x (TV series support)
+
+Version 3.0.0 introduced TV series support with a **two-provider architecture**:
 
 1. **Remove** the old provider URL in Plex Settings → Metadata Agents
-2. **Add two new provider URLs**:
-   - `http://localhost:5100/` — for movies
-   - `http://localhost:5100/tv` — for TV shows
-3. **Create a new TV Show agent** using "VPRO Cinema TV (Dutch Summaries)" as primary
-4. Your existing movie agent will continue to work with the movie provider
+2. **Add two provider URLs**:
+   - `http://localhost:5100/movies` — for movies
+   - `http://localhost:5100/series` — for TV shows
+3. **Create a new TV Show agent** using "VPRO Cinema (Dutch Summaries) - Series" as primary
+4. Update your movie agent to use "VPRO Cinema (Dutch Summaries) - Movies"
 
 This split is required by Plex's Custom Metadata Provider API — a single provider cannot properly combine with
 both "Plex Movie" and "Plex Series" as secondary providers. See the Quick Start section for detailed setup steps.
