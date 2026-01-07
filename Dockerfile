@@ -2,7 +2,7 @@ FROM python:3.11-slim
 
 LABEL maintainer="Klaas (c_kick/hnldesign)"
 LABEL description="VPRO Cinema Metadata Provider for Plex"
-LABEL version="3.1.0"
+LABEL version="3.1.1"
 
 WORKDIR /app
 

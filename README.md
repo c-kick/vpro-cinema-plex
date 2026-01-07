@@ -320,8 +320,17 @@ vpro-cinema-plex/
 
 ## Updating
 
+**Standalone docker-compose:**
 ```bash
 git pull && docker-compose down && docker-compose build --no-cache && docker-compose up -d
+```
+
+**Portainer stack:**
+```bash
+cd /path/to/vpro-cinema-plex
+git pull
+docker build -t vpro-cinema:latest .
+# Then redeploy the stack in Portainer
 ```
 
 Verify: `curl http://localhost:5100/health`
