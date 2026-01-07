@@ -56,6 +56,9 @@ class CacheEntry:
     status: str  # CacheStatus value
     fetched_at: str = ""  # ISO format timestamp
     last_accessed: str = ""  # ISO format timestamp
+    # Lookup diagnostics
+    lookup_method: Optional[str] = None  # "poms", "tmdb_alt", "web"
+    discovered_imdb: Optional[str] = None  # IMDB found via TMDB lookup
 
     def is_expired(self) -> bool:
         """
@@ -104,6 +107,8 @@ class CacheEntry:
             status=data.get("status", CacheStatus.NOT_FOUND.value),
             fetched_at=data.get("fetched_at", ""),
             last_accessed=data.get("last_accessed", ""),
+            lookup_method=data.get("lookup_method"),
+            discovered_imdb=data.get("discovered_imdb"),
         )
 
 

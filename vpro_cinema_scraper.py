@@ -68,6 +68,7 @@ from text_utils import (
     titles_match,
     title_similarity,
     sanitize_description,
+    is_valid_description,
 )
 from metrics import metrics
 
@@ -95,6 +96,9 @@ class VPROFilm:
     genres: List[str] = field(default_factory=list)
     vpro_rating: Optional[int] = None
     media_type: str = "film"  # "film" or "series"
+    # Lookup diagnostics
+    lookup_method: Optional[str] = None  # "poms", "tmdb_alt", "web"
+    discovered_imdb: Optional[str] = None  # IMDB found via TMDB lookup
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -109,6 +113,8 @@ class VPROFilm:
             'genres': self.genres,
             'vpro_rating': self.vpro_rating,
             'media_type': self.media_type,
+            'lookup_method': self.lookup_method,
+            'discovered_imdb': self.discovered_imdb,
         }
 
 
@@ -181,6 +187,131 @@ class TMDBClient:
             return data["tv_results"][0].get("id"), "series"
 
         return None, "film"
+
+    def search_by_title(
+        self,
+        title: str,
+        year: Optional[int] = None,
+        media_type: str = "all"
+    ) -> tuple[Optional[str], List[str]]:
+        """
+        Search TMDB by title and year to find IMDB ID and alternate titles.
+
+        This enables reverse lookup: given an English title, find the original
+        title and other alternates.
+
+        Args:
+            title: Title to search for
+            year: Optional release year
+            media_type: "film", "series", or "all"
+
+        Returns:
+            Tuple of (imdb_id, list of alternate titles including original)
+        """
+        if not self.api_key:
+            return None, []
+
+        imdb_id = None
+        tmdb_id = None
+        detected_type = "film"
+        titles = []
+
+        # Search movies
+        if media_type in ("film", "all"):
+            params = {"query": title}
+            if year:
+                params["year"] = year
+            data = self._get("/search/movie", params)
+            if data and data.get("results"):
+                # Find best match (prefer exact year match)
+                for result in data["results"]:
+                    release_year = None
+                    if result.get("release_date"):
+                        try:
+                            release_year = int(result["release_date"][:4])
+                        except (ValueError, IndexError):
+                            pass
+                    if year and release_year == year:
+                        tmdb_id = result.get("id")
+                        detected_type = "film"
+                        break
+                if not tmdb_id and data["results"]:
+                    tmdb_id = data["results"][0].get("id")
+                    detected_type = "film"
+
+        # Search TV if no movie found or specifically looking for series
+        if not tmdb_id and media_type in ("series", "all"):
+            params = {"query": title}
+            if year:
+                params["first_air_date_year"] = year
+            data = self._get("/search/tv", params)
+            if data and data.get("results"):
+                for result in data["results"]:
+                    air_year = None
+                    if result.get("first_air_date"):
+                        try:
+                            air_year = int(result["first_air_date"][:4])
+                        except (ValueError, IndexError):
+                            pass
+                    if year and air_year == year:
+                        tmdb_id = result.get("id")
+                        detected_type = "series"
+                        break
+                if not tmdb_id and data["results"]:
+                    tmdb_id = data["results"][0].get("id")
+                    detected_type = "series"
+
+        if not tmdb_id:
+            return None, []
+
+        # Get external IDs (IMDB)
+        if detected_type == "series":
+            ext_data = self._get(f"/tv/{tmdb_id}/external_ids")
+        else:
+            ext_data = self._get(f"/movie/{tmdb_id}/external_ids")
+
+        if ext_data:
+            imdb_id = ext_data.get("imdb_id")
+
+        # Get details for original title
+        if detected_type == "series":
+            details = self._get(f"/tv/{tmdb_id}")
+            alt_data = self._get(f"/tv/{tmdb_id}/alternative_titles")
+            original_title_key = "original_name"
+            alt_results_key = "results"
+        else:
+            details = self._get(f"/movie/{tmdb_id}")
+            alt_data = self._get(f"/movie/{tmdb_id}/alternative_titles")
+            original_title_key = "original_title"
+            alt_results_key = "titles"
+
+        seen = set()
+
+        def add_title(t: str):
+            if t and t.lower() not in seen:
+                seen.add(t.lower())
+                titles.append(t)
+
+        # Add original title first (most important for VPRO)
+        if details:
+            add_title(details.get(original_title_key))
+
+        # Add alternate titles, prioritizing FR/NL/BE/DE
+        alt_titles = alt_data.get(alt_results_key, []) if alt_data else []
+        preferred_countries = ["FR", "NL", "BE", "DE"]
+
+        for country in preferred_countries:
+            for t in alt_titles:
+                if t.get("iso_3166_1") == country:
+                    add_title(t.get("title"))
+
+        for t in alt_titles:
+            add_title(t.get("title"))
+
+        if titles:
+            logger.info(f"TMDB search '{title}' ({year}): imdb={imdb_id}, titles={titles[:3]}...")
+
+        return imdb_id, titles
 
     def get_alternate_titles(self, imdb_id: str, media_type: str = "all") -> List[str]:
         """
@@ -494,13 +625,35 @@ class POMSAPIClient:
         ]
 
         description = None
+        url = result.get("url", "")
+
+        # First try to get description from API paragraphs
         paragraphs = result.get("paragraphs", [])
         if paragraphs:
             raw_desc = paragraphs[0].get("body", "")
-            description = sanitize_description(raw_desc)
+            sanitized = sanitize_description(raw_desc)
+            # Validate description is actual content, not login/error page
+            if is_valid_description(sanitized):
+                description = sanitized
+            else:
+                logger.warning(f"POMS: Invalid API description for '{result.get('title', 'unknown')}' (len={len(raw_desc)})")
+
+        # If no valid description from API but we have a URL, try scraping the page directly
+        if not description and url:
+            logger.info(f"POMS: Scraping page for '{result.get('title', 'unknown')}' - {url}")
+            try:
+                scraper = VPROPageScraper(session=self.session)
+                scraped = scraper.scrape(url)
+                if scraped and scraped.description:
+                    description = scraped.description
+                    logger.info(f"POMS: Page scrape successful for '{result.get('title', 'unknown')}'")
+                else:
+                    logger.debug(f"POMS: Page scrape returned no description for '{url}'")
+            except Exception as e:
+                logger.warning(f"POMS: Page scrape failed for '{url}': {e}")
 
         vpro_id = None
-        url = result.get("url", "")
+
         if url:
             match = re.search(r'(?:film|serie)~(\d+)~', url)
             if match:
@@ -837,20 +990,45 @@ class VPROPageScraper:
             if not title:
                 return None
 
-            # Extract description
+            # Extract description - try multiple sources
             description = None
+
+            # Source 1: Article paragraphs
             article = soup.find('article')
             if article:
                 for p in article.find_all('p'):
                     text = p.get_text(strip=True)
                     if len(text) > 100:
-                        description = sanitize_description(text)
-                        break
+                        sanitized = sanitize_description(text)
+                        if is_valid_description(sanitized):
+                            description = sanitized
+                            break
 
+            # Source 2: Intro/description class
             if not description:
                 intro = soup.find(class_=re.compile(r'intro|description|body'))
                 if intro:
-                    description = sanitize_description(intro.get_text(strip=True))
+                    sanitized = sanitize_description(intro.get_text(strip=True))
+                    if is_valid_description(sanitized):
+                        description = sanitized
+
+            # Source 3: Meta description tag (reliable for VPRO pages)
+            if not description:
+                meta_desc = soup.find('meta', attrs={'name': 'description'})
+                if meta_desc and meta_desc.get('content'):
+                    sanitized = sanitize_description(meta_desc['content'])
+                    if is_valid_description(sanitized):
+                        description = sanitized
+                        logger.debug(f"Using meta description for {url}")
+
+            # Source 4: OpenGraph description
+            if not description:
+                og_desc = soup.find('meta', attrs={'property': 'og:description'})
+                if og_desc and og_desc.get('content'):
+                    sanitized = sanitize_description(og_desc['content'])
+                    if is_valid_description(sanitized):
+                        description = sanitized
+                        logger.debug(f"Using og:description for {url}")
 
             # Extract year
             year = None
@@ -932,9 +1110,11 @@ def _search_poms_api(
         logger.debug(f"POMS API returned {len(items)} results for '{title}'")
 
         films = [poms.parse_item(item) for item in items]
-        films = [f for f in films if f]
+        # Filter to only films that exist AND have valid descriptions
+        films = [f for f in films if f and f.description]
 
         if not films:
+            logger.debug(f"POMS: All {len(items)} results lacked valid descriptions")
             return None
 
         # Exact title + year match
@@ -1071,34 +1251,49 @@ def get_vpro_description(
     session = create_session(timeout=30)
 
     try:
+        # Track discovered IMDB for diagnostics
+        discovered_imdb = None
+
         # Step 1: Try original title via POMS API
         result = _search_poms_api(title, year, director, media_type, session)
         if result:
+            result.lookup_method = "poms"
             metrics.inc("vpro_searches", labels={"result": "found", "method": "poms"})
             return result
 
         # Step 2: Try alternate titles via TMDB
+        tmdb = TMDBClient(session=session)
+        alt_titles = []
+
         if imdb_id:
-            logger.info(f"No POMS match for '{title}' - fetching alternate titles...")
-
-            tmdb = TMDBClient(session=session)
+            # Have IMDB ID - fetch alternate titles directly
+            logger.info(f"No POMS match for '{title}' - fetching alternate titles by IMDB...")
             alt_titles = tmdb.get_alternate_titles(imdb_id, media_type)
+        else:
+            # No IMDB ID - search TMDB by title+year to find original title
+            logger.info(f"No POMS match for '{title}' - searching TMDB for alternate titles...")
+            discovered_imdb, alt_titles = tmdb.search_by_title(title, year, media_type)
+            if discovered_imdb:
+                logger.info(f"TMDB found IMDB ID: {discovered_imdb}")
 
-            # Filter out titles we already tried
-            alt_titles = [t for t in alt_titles if not titles_match(t, title)]
+        # Filter out titles we already tried
+        alt_titles = [t for t in alt_titles if not titles_match(t, title)]
 
-            for alt_title in alt_titles[:5]:
-                logger.info(f"Trying alternate title: '{alt_title}'")
+        for alt_title in alt_titles[:5]:
+            logger.info(f"Trying alternate title: '{alt_title}'")
 
-                result = _search_poms_api(alt_title, year, director, media_type, session)
-                if result:
-                    logger.info(f"Found via alternate title '{alt_title}': {result.title}")
-                    metrics.inc("vpro_searches", labels={"result": "found", "method": "tmdb_alt"})
-                    return result
+            result = _search_poms_api(alt_title, year, director, media_type, session)
+            if result:
+                result.lookup_method = "tmdb_alt"
+                result.discovered_imdb = discovered_imdb
+                logger.info(f"Found via alternate title '{alt_title}': {result.title}")
+                metrics.inc("vpro_searches", labels={"result": "found", "method": "tmdb_alt"})
+                return result
 
         # Step 3: Web search fallback
         result = _search_web_fallback(title, year, media_type, session)
         if result:
+            result.lookup_method = "web"
             metrics.inc("vpro_searches", labels={"result": "found", "method": "web"})
             return result
 
