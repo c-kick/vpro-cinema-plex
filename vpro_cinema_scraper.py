@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-VPRO Cinema Scraper v3.0.0
+VPRO Cinema Scraper v3.1.0
 ==========================
 
 Searches VPRO Cinema database for Dutch film and TV series descriptions.
 
 Search Strategy:
     1. PRIMARY: NPO POMS API (direct database query via authenticated REST API)
-    2. FALLBACK: Web search (DuckDuckGo → Startpage) + page scraping
+    2. FALLBACK: Web search (DuckDuckGo -> Startpage) + page scraping
     3. ALTERNATE TITLES: If no match and IMDB ID available, fetch alternate
        titles from TMDB and retry search
 
@@ -22,7 +22,7 @@ Credential Management:
 
 Environment Variables:
     TMDB_API_KEY: API key for TMDB alternate titles lookup (optional but recommended)
-    POMS_CACHE_FILE: Path to POMS credentials cache (default: ./credentials.json)
+    POMS_CACHE_FILE: Path to POMS credentials cache (default: ./cache/credentials.json)
 
 Usage:
     from vpro_cinema_scraper import get_vpro_description
@@ -45,28 +45,37 @@ import json
 import logging
 import os
 import re
-import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any
 from urllib.parse import urlencode, quote_plus, parse_qs, urlparse, unquote
 
-import requests
 from bs4 import BeautifulSoup
+
+from constants import (
+    MediaType,
+    POMS_API_BASE,
+    POMS_ORIGIN,
+    POMS_PROFILE,
+    TMDB_API_BASE,
+    TITLE_SIMILARITY_THRESHOLD,
+    YEAR_TOLERANCE,
+)
+from credentials import get_credential_manager, CredentialManager
+from http_client import RateLimitedSession, create_session
+from text_utils import (
+    normalize_for_comparison,
+    titles_match,
+    title_similarity,
+    sanitize_description,
+)
+from metrics import metrics
 
 # Configure logging
 logger = logging.getLogger(__name__)
 
-# =============================================================================
-# Configuration
-# =============================================================================
-
+# Environment variables
 TMDB_API_KEY = os.environ.get("TMDB_API_KEY", "")
-POMS_CACHE_FILE = os.environ.get("POMS_CACHE_FILE", "./credentials.json")
-
-# Hardcoded fallback credentials (from vprogids.nl as of Jan 2026)
-DEFAULT_API_KEY = "ione7ahfij"
-DEFAULT_API_SECRET = "aag9veesei"
 
 
 # =============================================================================
@@ -88,6 +97,7 @@ class VPROFilm:
     media_type: str = "film"  # "film" or "series"
 
     def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for serialization."""
         return {
             'title': self.title,
             'year': self.year,
@@ -103,225 +113,35 @@ class VPROFilm:
 
 
 # =============================================================================
-# Credential Manager - Auto-extracts credentials from vprogids.nl
-# =============================================================================
-
-class CredentialManager:
-    """
-    Manages POMS API credentials with automatic refresh capability.
-    
-    Credentials are embedded in vprogids.nl frontend JavaScript.
-    If the API returns 401/403, this class can scrape fresh credentials.
-    
-    Credential sources (in order of priority):
-        1. Cached credentials from credentials.json
-        2. Fresh extraction from vprogids.nl
-        3. Hardcoded fallback defaults
-    """
-    
-    CREDENTIAL_URL = "https://www.vprogids.nl/cinema/zoek.html"
-    
-    # Patterns to find credentials in JavaScript
-    # These match various ways the credentials might be defined
-    CREDENTIAL_PATTERNS = [
-        # Pattern: vpronlApiKey = "xxx" or vpronlSecret = "xxx"
-        (r'vpronlApiKey\s*[=:]\s*["\']([^"\']+)["\']', r'vpronlSecret\s*[=:]\s*["\']([^"\']+)["\']'),
-        # Pattern: apiKey: "xxx", secret: "xxx"  
-        (r'apiKey\s*[=:]\s*["\']([^"\']+)["\']', r'(?:apiSecret|secret)\s*[=:]\s*["\']([^"\']+)["\']'),
-        # Pattern: "apiKey":"xxx"
-        (r'"apiKey"\s*:\s*"([^"]+)"', r'"(?:apiSecret|secret)"\s*:\s*"([^"]+)"'),
-        # Pattern: key: 'xxx' (in config objects)
-        (r'key\s*:\s*["\']([a-z0-9]{8,12})["\']', r'secret\s*:\s*["\']([a-z0-9]{8,12})["\']'),
-    ]
-    
-    def __init__(self, cache_file: str = None):
-        self.cache_file = cache_file or POMS_CACHE_FILE
-        self._api_key: Optional[str] = None
-        self._api_secret: Optional[str] = None
-        self._load_cached()
-    
-    def _load_cached(self) -> bool:
-        """Load credentials from cache file."""
-        if not os.path.exists(self.cache_file):
-            return False
-        
-        try:
-            with open(self.cache_file, 'r') as f:
-                data = json.load(f)
-            
-            self._api_key = data.get("api_key")
-            self._api_secret = data.get("api_secret")
-            
-            if self._api_key and self._api_secret:
-                fetched_at = data.get("fetched_at", "unknown")
-                logger.debug(f"Loaded cached credentials (fetched: {fetched_at})")
-                return True
-        except Exception as e:
-            logger.warning(f"Failed to load cached credentials: {e}")
-        
-        return False
-    
-    def _save_cache(self):
-        """Save current credentials to cache file."""
-        if not self._api_key or not self._api_secret:
-            return
-        
-        try:
-            # Ensure directory exists
-            cache_dir = os.path.dirname(self.cache_file)
-            if cache_dir:
-                os.makedirs(cache_dir, exist_ok=True)
-            
-            data = {
-                "api_key": self._api_key,
-                "api_secret": self._api_secret,
-                "fetched_at": datetime.now(timezone.utc).isoformat(),
-                "source": self.CREDENTIAL_URL,
-            }
-            
-            with open(self.cache_file, 'w') as f:
-                json.dump(data, f, indent=2)
-            
-            logger.info(f"Saved credentials to {self.cache_file}")
-        except Exception as e:
-            logger.warning(f"Failed to save credentials cache: {e}")
-    
-    def _extract_from_page(self, html: str) -> Tuple[Optional[str], Optional[str]]:
-        """Extract API credentials from page HTML/JavaScript."""
-        api_key = None
-        api_secret = None
-        
-        for key_pattern, secret_pattern in self.CREDENTIAL_PATTERNS:
-            if not api_key:
-                key_match = re.search(key_pattern, html, re.IGNORECASE)
-                if key_match:
-                    api_key = key_match.group(1)
-            
-            if not api_secret:
-                secret_match = re.search(secret_pattern, html, re.IGNORECASE)
-                if secret_match:
-                    api_secret = secret_match.group(1)
-            
-            if api_key and api_secret:
-                break
-        
-        return api_key, api_secret
-    
-    def fetch_fresh_credentials(self) -> bool:
-        """
-        Fetch fresh credentials from vprogids.nl.
-        
-        Returns:
-            True if credentials were successfully extracted and cached
-        """
-        logger.info("Fetching fresh API credentials from vprogids.nl...")
-        
-        try:
-            session = requests.Session()
-            session.headers.update({
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'nl-NL,nl;q=0.9,en;q=0.8',
-            })
-            
-            response = session.get(self.CREDENTIAL_URL, timeout=15)
-            response.raise_for_status()
-            
-            # Search in HTML and inline scripts
-            api_key, api_secret = self._extract_from_page(response.text)
-            
-            # Also check linked JavaScript files
-            if not (api_key and api_secret):
-                soup = BeautifulSoup(response.text, 'html.parser')
-                for script in soup.find_all('script', src=True):
-                    src = script['src']
-                    if not src.startswith('http'):
-                        src = f"https://www.vprogids.nl{src}" if src.startswith('/') else f"https://www.vprogids.nl/{src}"
-                    
-                    try:
-                        js_response = session.get(src, timeout=10)
-                        if js_response.ok:
-                            key, secret = self._extract_from_page(js_response.text)
-                            if key and not api_key:
-                                api_key = key
-                            if secret and not api_secret:
-                                api_secret = secret
-                            
-                            if api_key and api_secret:
-                                break
-                    except Exception:
-                        continue
-            
-            if api_key and api_secret:
-                logger.info(f"Extracted fresh credentials: key={api_key[:4]}..., secret={api_secret[:4]}...")
-                self._api_key = api_key
-                self._api_secret = api_secret
-                self._save_cache()
-                return True
-            else:
-                logger.warning("Could not extract credentials from vprogids.nl")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Failed to fetch credentials: {e}")
-            return False
-    
-    @property
-    def api_key(self) -> str:
-        """Get current API key, falling back to default."""
-        return self._api_key or DEFAULT_API_KEY
-    
-    @property
-    def api_secret(self) -> str:
-        """Get current API secret, falling back to default."""
-        return self._api_secret or DEFAULT_API_SECRET
-    
-    def invalidate(self):
-        """Mark current credentials as invalid, forcing refresh on next use."""
-        logger.info("Invalidating cached credentials")
-        self._api_key = None
-        self._api_secret = None
-        
-        if os.path.exists(self.cache_file):
-            try:
-                os.remove(self.cache_file)
-            except OSError:
-                pass
-    
-    def refresh_if_needed(self) -> bool:
-        """Refresh credentials if none are cached."""
-        if self._api_key and self._api_secret:
-            return True
-        return self.fetch_fresh_credentials()
-
-
-# Global credential manager instance
-_credential_manager: Optional[CredentialManager] = None
-
-
-def get_credential_manager() -> CredentialManager:
-    """Get or create the global credential manager."""
-    global _credential_manager
-    if _credential_manager is None:
-        _credential_manager = CredentialManager()
-    return _credential_manager
-
-
-# =============================================================================
-# TMDB API Client - For Alternate Titles
+# TMDB API Client
 # =============================================================================
 
 class TMDBClient:
-    """Client for TMDB API to fetch alternate titles (supports both movies and TV series)."""
+    """
+    Client for TMDB API to fetch alternate titles.
 
-    BASE_URL = "https://api.themoviedb.org/3"
+    Supports both movies and TV series lookup.
+    """
 
-    def __init__(self, api_key: str = None, timeout: int = 10):
+    def __init__(self, api_key: str = None, session: RateLimitedSession = None):
+        """
+        Initialize TMDB client.
+
+        Args:
+            api_key: TMDB API key. Defaults to TMDB_API_KEY env var.
+            session: Optional shared session for connection pooling.
+        """
         self.api_key = api_key or TMDB_API_KEY
-        self.timeout = timeout
-        self.session = requests.Session()
+        self.session = session or create_session(timeout=10)
+        self._owns_session = session is None
+
+    def close(self) -> None:
+        """Close session if we own it."""
+        if self._owns_session:
+            self.session.close()
 
     def _get(self, endpoint: str, params: dict = None) -> Optional[dict]:
+        """Make authenticated GET request to TMDB API."""
         if not self.api_key:
             return None
 
@@ -329,15 +149,15 @@ class TMDBClient:
         params["api_key"] = self.api_key
 
         try:
-            url = f"{self.BASE_URL}{endpoint}"
-            response = self.session.get(url, params=params, timeout=self.timeout)
+            url = f"{TMDB_API_BASE}{endpoint}"
+            response = self.session.get(url, params=params)
             response.raise_for_status()
             return response.json()
         except Exception as e:
             logger.warning(f"TMDB API error: {e}")
             return None
 
-    def find_by_imdb(self, imdb_id: str, media_type: str = "all") -> Tuple[Optional[int], str]:
+    def find_by_imdb(self, imdb_id: str, media_type: str = "all") -> tuple[Optional[int], str]:
         """
         Find TMDB ID from IMDB ID.
 
@@ -346,7 +166,7 @@ class TMDBClient:
             media_type: "film", "series", or "all" (checks both)
 
         Returns:
-            Tuple of (tmdb_id, detected_media_type) where detected_media_type is "film" or "series"
+            Tuple of (tmdb_id, detected_media_type)
         """
         data = self._get(f"/find/{imdb_id}", {"external_source": "imdb_id"})
         if not data:
@@ -365,11 +185,15 @@ class TMDBClient:
     def get_alternate_titles(self, imdb_id: str, media_type: str = "all") -> List[str]:
         """
         Get alternate titles for a movie or TV series by IMDB ID.
+
         Prioritizes French, Dutch, Belgian, and German titles for VPRO searches.
 
         Args:
             imdb_id: The IMDB ID to look up
             media_type: "film", "series", or "all" (auto-detect)
+
+        Returns:
+            List of alternate titles, prioritized by relevance
         """
         if not self.api_key:
             logger.debug("TMDB API key not configured, skipping alternate titles")
@@ -384,8 +208,8 @@ class TMDBClient:
         if detected_type == "series":
             details = self._get(f"/tv/{tmdb_id}")
             alt_data = self._get(f"/tv/{tmdb_id}/alternative_titles")
-            original_title_key = "original_name"  # TV uses 'name' instead of 'title'
-            alt_results_key = "results"  # TV uses 'results' instead of 'titles'
+            original_title_key = "original_name"
+            alt_results_key = "results"
         else:
             details = self._get(f"/movie/{tmdb_id}")
             alt_data = self._get(f"/movie/{tmdb_id}/alternative_titles")
@@ -406,18 +230,23 @@ class TMDBClient:
 
         # Priority 2: Preferred language titles
         preferred_countries = ["FR", "NL", "BE", "DE"]
-
         alt_titles = alt_data.get(alt_results_key, []) if alt_data else []
+
         if alt_titles:
+            # First add preferred countries
             for country in preferred_countries:
                 for t in alt_titles:
                     if t.get("iso_3166_1") == country:
                         add_title(t.get("title"))
 
+            # Then add rest
             for t in alt_titles:
                 add_title(t.get("title"))
 
-        logger.info(f"TMDB alternate titles for {imdb_id} [{detected_type}]: {titles[:5]}{'...' if len(titles) > 5 else ''}")
+        logger.info(
+            f"TMDB alternate titles for {imdb_id} [{detected_type}]: "
+            f"{titles[:5]}{'...' if len(titles) > 5 else ''}"
+        )
         return titles
 
 
@@ -428,30 +257,39 @@ class TMDBClient:
 class POMSAPIClient:
     """
     NPO POMS REST API client for VPRO Cinema.
-    
+
     Uses HMAC-SHA256 authentication with auto-refreshing credentials.
     If authentication fails, automatically fetches fresh credentials
     from vprogids.nl and retries.
     """
-    
-    API_BASE = "https://rs.poms.omroep.nl/v1/api"
-    ORIGIN = "https://www.vprogids.nl"
-    PROFILE = "vprocinema"
-    
-    def __init__(self, timeout: int = 30, credential_manager: CredentialManager = None):
-        self.timeout = timeout
+
+    def __init__(
+        self,
+        session: RateLimitedSession = None,
+        credential_manager: CredentialManager = None,
+    ):
+        """
+        Initialize POMS API client.
+
+        Args:
+            session: Optional shared session for connection pooling.
+            credential_manager: Optional credential manager instance.
+        """
         self.creds = credential_manager or get_credential_manager()
-        self.session = requests.Session()
-        self.session.headers.update({
-            'Accept': 'application/json',
-            'Content-Type': 'application/json',
-            'User-Agent': 'Mozilla/5.0 (compatible; VPROCinemaProvider/2.5)',
-        })
-    
+        self.session = session or create_session(timeout=30)
+        self._owns_session = session is None
+
+    def close(self) -> None:
+        """Close session if we own it."""
+        if self._owns_session:
+            self.session.close()
+
     def _get_npo_date(self) -> str:
+        """Get current timestamp in NPO API format."""
         return datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
-    
+
     def _get_parameters_string(self, params: Dict[str, str]) -> str:
+        """Build sorted parameter string for HMAC signature."""
         if not params:
             return ""
         sorted_keys = sorted(params.keys())
@@ -460,96 +298,129 @@ class POMSAPIClient:
             if key != "iecomp":
                 parts.append(f",{key}:{params[key]}")
         return "".join(parts)
-    
-    def _get_credentials(self, headers: Dict[str, str], path: str, params: Dict[str, str] = None) -> str:
-        message_parts = [f"origin:{self.ORIGIN}"]
-        
+
+    def _get_credentials(
+        self,
+        headers: Dict[str, str],
+        path: str,
+        params: Dict[str, str] = None
+    ) -> str:
+        """
+        Generate HMAC-SHA256 signature for API authentication.
+
+        Args:
+            headers: Request headers (needs x-npo-date)
+            path: API endpoint path
+            params: Query parameters
+
+        Returns:
+            Base64-encoded HMAC signature
+        """
+        message_parts = [f"origin:{POMS_ORIGIN}"]
+
         if "x-npo-date" in headers:
             message_parts.append(f"x-npo-date:{headers['x-npo-date']}")
-        
+
         clean_path = path.split("?")[0]
         uri_part = f"uri:/v1/api/{clean_path}"
-        
+
         if params:
             uri_part += self._get_parameters_string(params)
-        
+
         message_parts.append(uri_part)
         message = ",".join(message_parts)
-        
+
         signature = hmac.new(
             self.creds.api_secret.encode('utf-8'),
             message.encode('utf-8'),
             hashlib.sha256
         )
-        
+
         return base64.b64encode(signature.digest()).decode('utf-8')
-    
+
     def _get_headers(self, path: str, params: Dict[str, str] = None) -> Dict[str, str]:
+        """Build authenticated request headers."""
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "Origin": self.ORIGIN,
+            "Origin": POMS_ORIGIN,
             "x-npo-date": self._get_npo_date(),
         }
-        
+
         credentials = self._get_credentials(headers, path, params)
         headers["Authorization"] = f"NPO {self.creds.api_key}:{credentials}"
-        
+
         return headers
-    
-    def _do_search(self, query: str, max_results: int, media_type: str = "all") -> Tuple[requests.Response, str, Dict]:
-        """Execute search request, returning response and request details for retry.
+
+    def _do_search(
+        self,
+        query: str,
+        max_results: int,
+        media_type: str = "all"
+    ) -> tuple:
+        """
+        Execute search request.
 
         Args:
             query: Search query string
-            max_results: Maximum number of results to return
-            media_type: "film", "series", or "all" (default)
+            max_results: Maximum number of results
+            media_type: "film", "series", or "all"
+
+        Returns:
+            Tuple of (response, path, params) for potential retry
         """
         path = "pages/"
-        params = {"profile": self.PROFILE, "max": str(max_results)}
+        params = {"profile": POMS_PROFILE, "max": str(max_results)}
 
-        # Build request body - facet filter is optional
         body = {
             "highlight": True,
             "searches": {"text": query},
         }
 
         # Add facet filter only when searching for a specific type
-        # (POMS API doesn't accept arrays, only strings)
         if media_type == "film":
             body["facets"] = {"types": {"include": "MOVIE"}}
         elif media_type == "series":
             body["facets"] = {"types": {"include": "SERIES"}}
-        # else: "all" - no facet filter, let parse_item() filter results
 
         headers = self._get_headers(path, params)
-        url = f"{self.API_BASE}/{path}?{urlencode(params)}"
+        url = f"{POMS_API_BASE}/{path}?{urlencode(params)}"
 
-        response = self.session.post(url, headers=headers, json=body, timeout=self.timeout)
+        response = self.session.post(url, headers=headers, json=body)
         return response, path, params
 
-    def search(self, query: str, max_results: int = 10, media_type: str = "all") -> List[Dict[str, Any]]:
+    def search(
+        self,
+        query: str,
+        max_results: int = 10,
+        media_type: str = "all"
+    ) -> List[Dict[str, Any]]:
         """
-        Search VPRO Cinema database for films and/or series.
+        Search VPRO Cinema database.
+
+        Automatically refreshes credentials on 401/403 and retries once.
 
         Args:
             query: Search query string
-            max_results: Maximum number of results to return
-            media_type: "film", "series", or "all" (default)
+            max_results: Maximum number of results
+            media_type: "film", "series", or "all"
 
-        Automatically refreshes credentials on 401/403 and retries once.
+        Returns:
+            List of search result items
         """
         try:
-            response, path, params = self._do_search(query, max_results, media_type)
-            
+            with metrics.timer("poms_search_duration_ms"):
+                response, path, params = self._do_search(query, max_results, media_type)
+
             # Check for auth failure
             if response.status_code in (401, 403):
-                logger.warning(f"POMS API auth failed ({response.status_code}) - refreshing credentials...")
-                
+                logger.warning(
+                    f"POMS API auth failed ({response.status_code}) - refreshing credentials..."
+                )
+                metrics.inc("poms_auth_failures")
+
                 # Invalidate and fetch fresh credentials
-                self.creds.invalidate()
-                if self.creds.fetch_fresh_credentials():
-                    # Retry with new credentials
+                if self.creds.invalidate_and_refresh():
                     logger.info("Retrying with fresh credentials...")
                     response, _, _ = self._do_search(query, max_results, media_type)
 
@@ -559,31 +430,32 @@ class POMSAPIClient:
                 else:
                     logger.error("Failed to refresh credentials")
                     return []
-            
+
             if response.status_code != 200:
                 logger.error(f"POMS API error {response.status_code}: {response.text[:200]}")
                 return []
-            
+
             data = response.json()
             items = data.get("items", [])
-            logger.debug(f"POMS API returned {len(items)} items for '{query}'")
+            logger.debug(f"POMS API returned {len(items)} results for '{query}'")
+            metrics.inc("poms_searches", labels={"status": "success"})
             return items
-            
-        except requests.Timeout:
-            logger.error(f"POMS API request timed out after {self.timeout}s")
-            return []
-        except requests.ConnectionError as e:
-            logger.error(f"POMS API connection failed: {e}")
-            return []
-        except requests.RequestException as e:
+
+        except Exception as e:
             logger.error(f"POMS API request failed: {e}")
+            metrics.inc("poms_searches", labels={"status": "error"})
             return []
-        except (json.JSONDecodeError, KeyError) as e:
-            logger.error(f"POMS API response parsing failed: {e}")
-            return []
-    
+
     def parse_item(self, item: Dict[str, Any]) -> Optional[VPROFilm]:
-        """Parse API response item into VPROFilm object (supports both films and series)."""
+        """
+        Parse API response item into VPROFilm object.
+
+        Args:
+            item: Raw API response item
+
+        Returns:
+            VPROFilm if parseable, None otherwise
+        """
         result = item.get("result", {})
 
         item_type = result.get("type")
@@ -615,17 +487,21 @@ class POMSAPIClient:
                 except ValueError:
                     pass
 
-        genres = [g.get("displayName", "") for g in result.get("genres", []) if g.get("displayName")]
+        genres = [
+            g.get("displayName", "")
+            for g in result.get("genres", [])
+            if g.get("displayName")
+        ]
 
         description = None
         paragraphs = result.get("paragraphs", [])
         if paragraphs:
-            description = paragraphs[0].get("body", "")
+            raw_desc = paragraphs[0].get("body", "")
+            description = sanitize_description(raw_desc)
 
         vpro_id = None
         url = result.get("url", "")
         if url:
-            # Match both film~ID~ and serie~ID~ patterns
             match = re.search(r'(?:film|serie)~(\d+)~', url)
             if match:
                 vpro_id = match.group(1)
@@ -652,42 +528,120 @@ class POMSAPIClient:
 # =============================================================================
 
 class WebSearcher:
-    """Search VPRO Cinema via web search engines (supports both films and series)."""
+    """
+    Search VPRO Cinema via web search engines.
+
+    Supports both films and series with fallback between
+    DuckDuckGo and Startpage.
+    """
 
     # URL patterns for matching VPRO Cinema URLs
     FILM_URL_PATTERN = r'vprogids\.nl/cinema/films/film~'
     SERIES_URL_PATTERN = r'vprogids\.nl/cinema/series/serie~'
 
-    def __init__(self, timeout: int = 15):
-        self.timeout = timeout
-        self.session = requests.Session()
-        self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'nl-NL,nl;q=0.9,en;q=0.8',
-        })
+    # CAPTCHA/bot detection indicators (specific elements, not just words)
+    CAPTCHA_INDICATORS = [
+        'id="captcha"',
+        'class="captcha"',
+        'name="captcha"',
+        'g-recaptcha',
+        'h-captcha',
+        'cf-turnstile',
+        'please verify you are human',
+        'confirm you are not a robot',
+        'complete the security check',
+        'unusual traffic from your computer',
+        '/captcha/',
+        'data-sitekey=',
+    ]
+
+    def __init__(self, session: RateLimitedSession = None):
+        """
+        Initialize web searcher.
+
+        Args:
+            session: Optional shared session for connection pooling.
+        """
+        self.session = session or create_session(timeout=15)
+        self._owns_session = session is None
+
+    def close(self) -> None:
+        """Close session if we own it."""
+        if self._owns_session:
+            self.session.close()
+
+    def _is_captcha_page(self, html: str) -> bool:
+        """
+        Detect CAPTCHA/bot protection pages.
+
+        Uses specific indicators to avoid false positives
+        (e.g., movies about robots).
+
+        Args:
+            html: Page HTML content
+
+        Returns:
+            True if page appears to be a CAPTCHA challenge
+        """
+        html_lower = html.lower()
+
+        # Check for specific CAPTCHA indicators
+        for indicator in self.CAPTCHA_INDICATORS:
+            if indicator in html_lower:
+                return True
+
+        # Additional check: very short response with block phrases
+        # (real content pages are longer)
+        if len(html) < 5000:
+            block_phrases = [
+                'are you a robot',
+                'automated access',
+                'access denied',
+                'blocked',
+            ]
+            if any(phrase in html_lower for phrase in block_phrases):
+                return True
+
+        return False
 
     def _get_search_paths(self, media_type: str) -> List[str]:
-        """Get the VPRO Cinema paths to search based on media type."""
+        """Get VPRO Cinema paths based on media type."""
         if media_type == "film":
             return ["cinema/films"]
         elif media_type == "series":
             return ["cinema/series"]
-        else:  # "all"
+        else:
             return ["cinema/films", "cinema/series"]
 
     def _matches_vpro_url(self, url: str, media_type: str) -> bool:
-        """Check if URL matches VPRO Cinema film or series pattern."""
+        """Check if URL matches VPRO Cinema pattern."""
         if media_type == "film":
             return bool(re.search(self.FILM_URL_PATTERN, url))
         elif media_type == "series":
             return bool(re.search(self.SERIES_URL_PATTERN, url))
-        else:  # "all"
-            return bool(re.search(self.FILM_URL_PATTERN, url) or
-                        re.search(self.SERIES_URL_PATTERN, url))
+        else:
+            return bool(
+                re.search(self.FILM_URL_PATTERN, url) or
+                re.search(self.SERIES_URL_PATTERN, url)
+            )
 
-    def search_duckduckgo(self, title: str, year: Optional[int] = None, media_type: str = "all") -> List[str]:
-        """Search using DuckDuckGo HTML."""
+    def search_duckduckgo(
+        self,
+        title: str,
+        year: Optional[int] = None,
+        media_type: str = "all"
+    ) -> List[str]:
+        """
+        Search using DuckDuckGo HTML.
+
+        Args:
+            title: Title to search for
+            year: Optional release year
+            media_type: "film", "series", or "all"
+
+        Returns:
+            List of matching VPRO URLs
+        """
         all_urls = []
 
         for path in self._get_search_paths(media_type):
@@ -699,8 +653,12 @@ class WebSearcher:
             logger.debug(f"DuckDuckGo query: {query}")
 
             try:
-                response = self.session.get(search_url, timeout=self.timeout)
+                response = self.session.get(search_url)
                 response.raise_for_status()
+
+                if self._is_captcha_page(response.text):
+                    logger.warning("DuckDuckGo showing CAPTCHA - skipping")
+                    continue
 
                 soup = BeautifulSoup(response.text, 'html.parser')
 
@@ -718,7 +676,7 @@ class WebSearcher:
                     elif self._matches_vpro_url(href, media_type):
                         all_urls.append(href)
 
-            except requests.RequestException as e:
+            except Exception as e:
                 logger.warning(f"DuckDuckGo search failed: {e}")
 
         # Dedupe while preserving order
@@ -732,8 +690,23 @@ class WebSearcher:
         logger.info(f"DuckDuckGo: found {len(unique_urls)} URLs for '{title}'")
         return unique_urls[:5]
 
-    def search_startpage(self, title: str, year: Optional[int] = None, media_type: str = "all") -> List[str]:
-        """Search using Startpage."""
+    def search_startpage(
+        self,
+        title: str,
+        year: Optional[int] = None,
+        media_type: str = "all"
+    ) -> List[str]:
+        """
+        Search using Startpage.
+
+        Args:
+            title: Title to search for
+            year: Optional release year
+            media_type: "film", "series", or "all"
+
+        Returns:
+            List of matching VPRO URLs
+        """
         all_urls = []
 
         for path in self._get_search_paths(media_type):
@@ -741,26 +714,30 @@ class WebSearcher:
             if year:
                 query += f' {year}'
 
-            search_url = f"https://www.startpage.com/sp/search?query={quote_plus(query)}&cat=web&language=dutch"
+            search_url = (
+                f"https://www.startpage.com/sp/search?"
+                f"query={quote_plus(query)}&cat=web&language=dutch"
+            )
             logger.debug(f"Startpage query: {query}")
 
-            time.sleep(0.5)  # Rate limiting
-
             try:
-                response = self.session.get(search_url, timeout=self.timeout)
+                response = self.session.get(search_url)
                 response.raise_for_status()
 
-                if 'captcha' in response.text.lower() or 'robot' in response.text.lower():
+                if self._is_captcha_page(response.text):
                     logger.warning("Startpage showing CAPTCHA - skipping")
                     continue
 
-                # Extract URLs - match both film and serie patterns
+                # Extract URLs with regex
                 if media_type == "film":
                     pattern = r'https?://(?:www\.)?vprogids\.nl/cinema/films/film~[^"\'&\s<>]+'
                 elif media_type == "series":
                     pattern = r'https?://(?:www\.)?vprogids\.nl/cinema/series/serie~[^"\'&\s<>]+'
-                else:  # "all"
-                    pattern = r'https?://(?:www\.)?vprogids\.nl/cinema/(?:films/film|series/serie)~[^"\'&\s<>]+'
+                else:
+                    pattern = (
+                        r'https?://(?:www\.)?vprogids\.nl/cinema/'
+                        r'(?:films/film|series/serie)~[^"\'&\s<>]+'
+                    )
 
                 matches = re.findall(pattern, response.text)
 
@@ -768,7 +745,7 @@ class WebSearcher:
                     url = re.sub(r'[&;].*$', '', url).rstrip('.')
                     all_urls.append(url)
 
-            except requests.RequestException as e:
+            except Exception as e:
                 logger.warning(f"Startpage search failed: {e}")
 
         # Dedupe while preserving order
@@ -782,8 +759,23 @@ class WebSearcher:
         logger.info(f"Startpage: found {len(unique_urls)} URLs for '{title}'")
         return unique_urls[:5]
 
-    def search(self, title: str, year: Optional[int] = None, media_type: str = "all") -> List[str]:
-        """Search using multiple engines."""
+    def search(
+        self,
+        title: str,
+        year: Optional[int] = None,
+        media_type: str = "all"
+    ) -> List[str]:
+        """
+        Search using multiple engines with fallback.
+
+        Args:
+            title: Title to search for
+            year: Optional release year
+            media_type: "film", "series", or "all"
+
+        Returns:
+            List of matching VPRO URLs
+        """
         urls = self.search_duckduckgo(title, year, media_type)
         if urls:
             return urls
@@ -806,22 +798,37 @@ StartpageSearcher = WebSearcher
 class VPROPageScraper:
     """Scrapes film and series details from VPRO Cinema pages."""
 
-    def __init__(self, timeout: int = 15):
-        self.timeout = timeout
-        self.session = requests.Session()
-        self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept': 'text/html,application/xhtml+xml',
-            'Accept-Language': 'nl-NL,nl;q=0.9',
-        })
+    def __init__(self, session: RateLimitedSession = None):
+        """
+        Initialize page scraper.
+
+        Args:
+            session: Optional shared session for connection pooling.
+        """
+        self.session = session or create_session(timeout=15)
+        self._owns_session = session is None
+
+    def close(self) -> None:
+        """Close session if we own it."""
+        if self._owns_session:
+            self.session.close()
 
     def scrape(self, url: str) -> Optional[VPROFilm]:
-        """Scrape film or series details from a VPRO Cinema page."""
+        """
+        Scrape film or series details from a VPRO Cinema page.
+
+        Args:
+            url: URL of the VPRO Cinema page
+
+        Returns:
+            VPROFilm if scraping succeeded, None otherwise
+        """
         try:
-            response = self.session.get(url, timeout=self.timeout)
+            response = self.session.get(url)
             response.raise_for_status()
             soup = BeautifulSoup(response.text, 'html.parser')
 
+            # Extract title
             title = None
             title_el = soup.find('h1')
             if title_el:
@@ -830,20 +837,22 @@ class VPROPageScraper:
             if not title:
                 return None
 
+            # Extract description
             description = None
             article = soup.find('article')
             if article:
                 for p in article.find_all('p'):
                     text = p.get_text(strip=True)
                     if len(text) > 100:
-                        description = text
+                        description = sanitize_description(text)
                         break
 
             if not description:
                 intro = soup.find(class_=re.compile(r'intro|description|body'))
                 if intro:
-                    description = intro.get_text(strip=True)
+                    description = sanitize_description(intro.get_text(strip=True))
 
+            # Extract year
             year = None
             year_match = re.search(r'\b(19|20)\d{2}\b', soup.get_text())
             if year_match:
@@ -851,7 +860,7 @@ class VPROPageScraper:
 
             # Detect media type and extract ID from URL
             vpro_id = None
-            media_type = "film"  # default
+            media_type = "film"
 
             if 'serie~' in url:
                 media_type = "series"
@@ -863,8 +872,12 @@ class VPROPageScraper:
                 if id_match:
                     vpro_id = id_match.group(1)
 
+            # Extract director (simple heuristic)
             director = None
-            director_match = re.search(r'(?:van|by|regie[:\s]+)([A-Z][a-z]+ [A-Z][a-z]+)', soup.get_text())
+            director_match = re.search(
+                r'(?:van|by|regie[:\s]+)([A-Z][a-z]+ [A-Z][a-z]+)',
+                soup.get_text()
+            )
             if director_match:
                 director = director_match.group(1)
 
@@ -877,35 +890,10 @@ class VPROPageScraper:
                 vpro_id=vpro_id,
                 media_type=media_type,
             )
-            
+
         except Exception as e:
             logger.warning(f"Failed to scrape {url}: {e}")
             return None
-
-
-# =============================================================================
-# Helper Functions
-# =============================================================================
-
-def _normalize_title(title: str) -> str:
-    return re.sub(r'[^\w\s]', '', title.lower()).strip()
-
-
-def _titles_match(title1: str, title2: str) -> bool:
-    return _normalize_title(title1) == _normalize_title(title2)
-
-
-def _title_similarity(title1: str, title2: str) -> float:
-    """Jaccard similarity between titles."""
-    words1 = set(_normalize_title(title1).split())
-    words2 = set(_normalize_title(title2).split())
-    
-    if not words1 or not words2:
-        return 0.0
-    
-    intersection = words1 & words2
-    union = words1 | words2
-    return len(intersection) / len(union)
 
 
 # =============================================================================
@@ -917,52 +905,77 @@ def _search_poms_api(
     year: Optional[int] = None,
     director: Optional[str] = None,
     media_type: str = "all",
+    session: RateLimitedSession = None,
 ) -> Optional[VPROFilm]:
-    """Search VPRO for a single title using POMS API only."""
+    """
+    Search VPRO using POMS API only.
+
+    Args:
+        title: Title to search for
+        year: Optional release year for validation
+        director: Optional director for disambiguation
+        media_type: "film", "series", or "all"
+        session: Optional shared session
+
+    Returns:
+        VPROFilm if found, None otherwise
+    """
+    poms = POMSAPIClient(session=session)
 
     try:
-        poms = POMSAPIClient(timeout=30)
         items = poms.search(title, max_results=10, media_type=media_type)
 
-        if items:
-            logger.debug(f"POMS API returned {len(items)} results for '{title}'")
-            
-            films = [poms.parse_film(item) for item in items]
-            films = [f for f in films if f]
-            
-            if films:
-                # Exact title + year match
-                if year:
-                    for film in films:
-                        if film.year == year and _titles_match(film.title, title):
-                            logger.info(f"POMS: Exact match - {film.title} ({film.year})")
-                            return film
-                
-                # Title match only (with year validation if year provided)
-                for film in films:
-                    if _titles_match(film.title, title):
-                        # If year provided, validate year is within acceptable range
-                        if year and film.year and abs(film.year - year) > 2:
-                            logger.warning(f"POMS: Rejecting title match '{film.title}' ({film.year}) - year diff {abs(film.year - year)}")
-                            continue
-                        logger.info(f"POMS: Title match - {film.title} ({film.year})")
-                        return film
-                
-                # Validate top result
-                best = films[0]
-                similarity = _title_similarity(title, best.title)
-                year_diff = abs(best.year - year) if (best.year and year) else 0
-                
-                if year and year_diff > 2:
-                    logger.warning(f"POMS: Rejecting '{best.title}' ({best.year}) - year diff {year_diff}")
-                elif similarity < 0.3:
-                    logger.warning(f"POMS: Rejecting '{best.title}' - low similarity {similarity:.0%}")
-                else:
-                    logger.info(f"POMS: Using top result - {best.title} ({best.year})")
-                    return best
-        else:
+        if not items:
             logger.debug(f"POMS: No results for '{title}'")
-            
+            return None
+
+        logger.debug(f"POMS API returned {len(items)} results for '{title}'")
+
+        films = [poms.parse_item(item) for item in items]
+        films = [f for f in films if f]
+
+        if not films:
+            return None
+
+        # Exact title + year match
+        if year:
+            for film in films:
+                if film.year == year and titles_match(film.title, title):
+                    logger.info(f"POMS: Exact match - {film.title} ({film.year})")
+                    metrics.inc("poms_matches", labels={"type": "exact"})
+                    return film
+
+        # Title match with year validation
+        for film in films:
+            if titles_match(film.title, title):
+                if year and film.year and abs(film.year - year) > YEAR_TOLERANCE:
+                    logger.debug(
+                        f"POMS: Rejecting '{film.title}' ({film.year}) - "
+                        f"year diff {abs(film.year - year)}"
+                    )
+                    continue
+                logger.info(f"POMS: Title match - {film.title} ({film.year})")
+                metrics.inc("poms_matches", labels={"type": "title"})
+                return film
+
+        # Validate top result by similarity
+        best = films[0]
+        similarity = title_similarity(title, best.title)
+        year_diff = abs(best.year - year) if (best.year and year) else 0
+
+        if year and year_diff > YEAR_TOLERANCE:
+            logger.debug(
+                f"POMS: Rejecting '{best.title}' ({best.year}) - year diff {year_diff}"
+            )
+        elif similarity < TITLE_SIMILARITY_THRESHOLD:
+            logger.debug(
+                f"POMS: Rejecting '{best.title}' - low similarity {similarity:.0%}"
+            )
+        else:
+            logger.info(f"POMS: Using top result - {best.title} ({best.year})")
+            metrics.inc("poms_matches", labels={"type": "fuzzy"})
+            return best
+
     except Exception as e:
         logger.error(f"POMS API error: {e}")
 
@@ -973,29 +986,44 @@ def _search_web_fallback(
     title: str,
     year: Optional[int] = None,
     media_type: str = "all",
+    session: RateLimitedSession = None,
 ) -> Optional[VPROFilm]:
-    """Search VPRO using web search engines (DuckDuckGo, Startpage)."""
+    """
+    Search VPRO using web search engines.
 
+    Args:
+        title: Title to search for
+        year: Optional release year for validation
+        media_type: "film", "series", or "all"
+        session: Optional shared session
+
+    Returns:
+        VPROFilm if found, None otherwise
+    """
     logger.info(f"Trying web search fallback for '{title}'...")
 
+    searcher = WebSearcher(session=session)
+    scraper = VPROPageScraper(session=session)
+
     try:
-        searcher = WebSearcher(timeout=15)
-        urls = searcher.search(title, year, media_type)
+        with metrics.timer("web_search_duration_ms"):
+            urls = searcher.search(title, year, media_type)
 
-        if urls:
-            logger.info(f"Web search found {len(urls)} URLs for '{title}'")
-            scraper = VPROPageScraper(timeout=15)
-
-            for url in urls:
-                film = scraper.scrape(url)
-                if film and film.description:
-                    if year and film.year and abs(film.year - year) > 2:
-                        continue
-
-                    logger.info(f"Web fallback: Found - {film.title} ({film.year})")
-                    return film
-        else:
+        if not urls:
             logger.info(f"Web search: No URLs found for '{title}'")
+            return None
+
+        logger.info(f"Web search found {len(urls)} URLs for '{title}'")
+
+        for url in urls:
+            film = scraper.scrape(url)
+            if film and film.description:
+                if year and film.year and abs(film.year - year) > YEAR_TOLERANCE:
+                    continue
+
+                logger.info(f"Web fallback: Found - {film.title} ({film.year})")
+                metrics.inc("web_fallback_matches")
+                return film
 
     except Exception as e:
         logger.error(f"Web search error: {e}")
@@ -1034,37 +1062,52 @@ def get_vpro_description(
         logging.basicConfig(level=logging.DEBUG)
 
     type_str = f" [{media_type}]" if media_type != "all" else ""
-    logger.info(f"Searching VPRO: '{title}' ({year}){type_str}" + (f" [{imdb_id}]" if imdb_id else ""))
+    imdb_str = f" [{imdb_id}]" if imdb_id else ""
+    logger.info(f"Searching VPRO: '{title}' ({year}){type_str}{imdb_str}")
 
-    # Step 1: Try original title via POMS API
-    result = _search_poms_api(title, year, director, media_type)
-    if result:
-        return result
+    metrics.inc("vpro_searches")
 
-    # Step 2: Try alternate titles via TMDB (if IMDB ID provided)
-    if imdb_id:
-        logger.info(f"No POMS match for '{title}' - fetching alternate titles from TMDB...")
+    # Create shared session for all requests
+    session = create_session(timeout=30)
 
-        tmdb = TMDBClient()
-        alt_titles = tmdb.get_alternate_titles(imdb_id, media_type)
+    try:
+        # Step 1: Try original title via POMS API
+        result = _search_poms_api(title, year, director, media_type, session)
+        if result:
+            metrics.inc("vpro_searches", labels={"result": "found", "method": "poms"})
+            return result
 
-        alt_titles = [t for t in alt_titles if not _titles_match(t, title)]
+        # Step 2: Try alternate titles via TMDB
+        if imdb_id:
+            logger.info(f"No POMS match for '{title}' - fetching alternate titles...")
 
-        for alt_title in alt_titles[:5]:
-            logger.info(f"Trying alternate title: '{alt_title}'")
+            tmdb = TMDBClient(session=session)
+            alt_titles = tmdb.get_alternate_titles(imdb_id, media_type)
 
-            result = _search_poms_api(alt_title, year, director, media_type)
-            if result:
-                logger.info(f"Found via alternate title '{alt_title}': {result.title}")
-                return result
+            # Filter out titles we already tried
+            alt_titles = [t for t in alt_titles if not titles_match(t, title)]
 
-    # Step 3: Web search fallback
-    result = _search_web_fallback(title, year, media_type)
-    if result:
-        return result
+            for alt_title in alt_titles[:5]:
+                logger.info(f"Trying alternate title: '{alt_title}'")
 
-    logger.info(f"No VPRO Cinema entry found for '{title}' ({year})")
-    return None
+                result = _search_poms_api(alt_title, year, director, media_type, session)
+                if result:
+                    logger.info(f"Found via alternate title '{alt_title}': {result.title}")
+                    metrics.inc("vpro_searches", labels={"result": "found", "method": "tmdb_alt"})
+                    return result
+
+        # Step 3: Web search fallback
+        result = _search_web_fallback(title, year, media_type, session)
+        if result:
+            metrics.inc("vpro_searches", labels={"result": "found", "method": "web"})
+            return result
+
+        logger.info(f"No VPRO Cinema entry found for '{title}' ({year})")
+        metrics.inc("vpro_searches", labels={"result": "not_found"})
+        return None
+
+    finally:
+        session.close()
 
 
 # =============================================================================
@@ -1074,6 +1117,7 @@ def get_vpro_description(
 def main():
     """Command-line interface for testing."""
     import argparse
+    from logging_config import configure_logging
 
     parser = argparse.ArgumentParser(
         description="Search VPRO Cinema for Dutch film and series descriptions",
@@ -1091,28 +1135,34 @@ Examples:
     parser.add_argument("--year", "-y", type=int, help="Release year")
     parser.add_argument("--imdb", "-i", help="IMDB ID (e.g., tt0080610)")
     parser.add_argument("--director", "-d", help="Director name")
-    parser.add_argument("--type", "-t", choices=["film", "series", "all"], default="all",
-                        help="Media type to search for (default: all)")
+    parser.add_argument(
+        "--type", "-t",
+        choices=["film", "series", "all"],
+        default="all",
+        help="Media type to search for (default: all)"
+    )
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
-    parser.add_argument("--refresh-credentials", action="store_true",
-                        help="Force refresh of POMS API credentials")
-    parser.add_argument("--version", action="version", version="%(prog)s 3.0.0")
+    parser.add_argument(
+        "--refresh-credentials",
+        action="store_true",
+        help="Force refresh of POMS API credentials"
+    )
+    parser.add_argument("--version", action="version", version="%(prog)s 3.1.0")
 
     args = parser.parse_args()
 
-    if args.verbose:
-        logging.basicConfig(level=logging.DEBUG, format='%(levelname)s: %(message)s')
-    else:
-        logging.basicConfig(level=logging.INFO, format='%(message)s')
+    # Configure logging
+    configure_logging(level="DEBUG" if args.verbose else "INFO")
 
     if args.refresh_credentials:
         print("Refreshing POMS API credentials...")
         creds = get_credential_manager()
-        creds.invalidate()
-        if creds.fetch_fresh_credentials():
-            print(f"✓ Credentials refreshed: key={creds.api_key[:4]}..., secret={creds.api_secret[:4]}...")
+        creds.delete_cache()
+        if creds.invalidate_and_refresh():
+            key, secret = creds.get_credentials()
+            print(f"Credentials refreshed: key={key[:4]}..., secret={secret[:4]}...")
         else:
-            print("✗ Failed to refresh credentials (using defaults)")
+            print("Failed to refresh credentials (using defaults)")
         return 0
 
     if not args.title:
@@ -1120,7 +1170,8 @@ Examples:
         return 1
 
     type_str = f" [{args.type}]" if args.type != "all" else ""
-    print(f"Searching VPRO Cinema for: {args.title}" + (f" ({args.year})" if args.year else "") + type_str)
+    print(f"Searching VPRO Cinema for: {args.title}" +
+          (f" ({args.year})" if args.year else "") + type_str)
     print("-" * 60)
 
     film = get_vpro_description(
@@ -1134,7 +1185,7 @@ Examples:
 
     if film:
         type_label = "Series" if film.media_type == "series" else "Film"
-        print(f"\n✓ Found ({type_label}): {film.title}")
+        print(f"\nFound ({type_label}): {film.title}")
         print(f"  Year: {film.year or 'Unknown'}")
         print(f"  Type: {film.media_type}")
         print(f"  Director: {film.director or 'Unknown'}")
@@ -1146,7 +1197,7 @@ Examples:
         desc = film.description or ''
         print(f"  {desc[:500]}..." if len(desc) > 500 else f"  {desc}")
     else:
-        print(f"\n✗ Not found in VPRO Cinema")
+        print(f"\nNot found in VPRO Cinema")
 
     return 0 if film else 1
 

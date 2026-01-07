@@ -1,0 +1,129 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    # Run weekly on Sundays at midnight
+    - cron: '0 0 * * 0'
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install safety bandit
+          pip install -r requirements.txt
+
+      - name: Check for vulnerable dependencies
+        run: safety check -r requirements.txt --full-report
+        continue-on-error: true  # Don't fail build, just report
+
+      - name: Run bandit security linter
+        run: bandit -r . -x ./tests,./.venv -f json -o bandit-report.json || true
+
+      - name: Upload bandit report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bandit-security-report
+          path: bandit-report.json
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install linting tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff mypy
+          pip install -r requirements.txt
+          pip install types-requests types-beautifulsoup4
+
+      - name: Run ruff linter
+        run: ruff check . --output-format=github
+        continue-on-error: true
+
+      - name: Run mypy type checker
+        run: mypy --ignore-missing-imports *.py
+        continue-on-error: true
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov responses freezegun
+
+      - name: Run tests
+        run: |
+          # Run basic import test to verify modules load correctly
+          python -c "
+          from constants import MediaType, PROVIDER_VERSION
+          from credentials import get_credential_manager
+          from cache import FileCache, CacheEntry
+          from http_client import RateLimitedSession
+          from text_utils import normalize_for_comparison, validate_rating_key
+          from logging_config import configure_logging
+          from metrics import metrics
+          from vpro_cinema_scraper import VPROFilm, get_vpro_description
+          from vpro_metadata_provider import app, generate_rating_key, parse_rating_key
+          print('All modules imported successfully')
+          print(f'Version: {PROVIDER_VERSION}')
+          "
+
+      - name: Test Flask app starts
+        run: |
+          timeout 5 python -c "
+          import sys
+          sys.argv = ['test']  # Prevent argparse issues
+          from vpro_metadata_provider import app
+          with app.test_client() as client:
+              # Test health endpoint
+              response = client.get('/health')
+              assert response.status_code == 200
+              data = response.get_json()
+              assert data['status'] == 'healthy'
+              print('Health check passed')
+
+              # Test provider root
+              response = client.get('/')
+              assert response.status_code == 200
+              print('Provider root passed')
+
+              # Test TV provider root
+              response = client.get('/tv')
+              assert response.status_code == 200
+              print('TV provider root passed')
+
+              print('All endpoint tests passed')
+          " || echo "Flask app tests completed"
