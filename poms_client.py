@@ -651,6 +651,9 @@ def search_poms_api(
         # Exact title + year match
         if year:
             for film in films:
+                # Skip if media type doesn't match (when filtering)
+                if media_type != "all" and film.media_type != media_type:
+                    continue
                 if film.year == year and titles_match(film.title, title):
                     logger.info(f"POMS: Exact match - {film.title} ({film.year})")
                     metrics.inc("poms_matches", labels={"type": "exact"})
@@ -658,6 +661,9 @@ def search_poms_api(
 
         # Title match with year validation
         for film in films:
+            # Skip if media type doesn't match (when filtering)
+            if media_type != "all" and film.media_type != media_type:
+                continue
             if titles_match(film.title, title):
                 if year and film.year and abs(film.year - year) > YEAR_TOLERANCE:
                     logger.debug(
@@ -682,7 +688,13 @@ def search_poms_api(
             similarity = title_similarity(title, best.title)
             year_diff = abs(best.year - year) if (best.year and year) else 0
 
-            if year and year_diff > YEAR_TOLERANCE:
+            # Check media type matches (when not searching for "all")
+            if media_type != "all" and best.media_type != media_type:
+                logger.debug(
+                    f"POMS: Rejecting '{best.title}' - type mismatch "
+                    f"(wanted {media_type}, got {best.media_type})"
+                )
+            elif year and year_diff > YEAR_TOLERANCE:
                 logger.debug(
                     f"POMS: Rejecting '{best.title}' ({best.year}) - year diff {year_diff}"
                 )

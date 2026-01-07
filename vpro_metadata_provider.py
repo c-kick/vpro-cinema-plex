@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-VPRO Cinema Plex Metadata Provider v3.1.1
+VPRO Cinema Plex Metadata Provider v3.1.2
 
 A custom Plex metadata provider that fetches Dutch film and TV series
 descriptions from VPRO Cinema.
