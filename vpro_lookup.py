@@ -87,7 +87,7 @@ def get_vpro_description(
         discovered_imdb = None
 
         # Step 1: Try original title via POMS API
-        result = search_poms_api(title, year, director, media_type, session)
+        result = search_poms_api(title, year, director, media_type, session, imdb_id)
         if result:
             result.lookup_method = "poms"
             metrics.inc("vpro_searches", labels={"result": "found", "method": "poms"})
@@ -114,7 +114,7 @@ def get_vpro_description(
         for alt_title in alt_titles[:5]:
             logger.info(f"Trying alternate title: '{alt_title}'")
 
-            result = search_poms_api(alt_title, year, director, media_type, session)
+            result = search_poms_api(alt_title, year, director, media_type, session, imdb_id)
             if result:
                 result.lookup_method = "tmdb_alt"
                 result.discovered_imdb = discovered_imdb
