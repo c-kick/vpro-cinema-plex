@@ -16,7 +16,7 @@ from constants import YEAR_TOLERANCE
 from http_client import RateLimitedSession, create_session
 from metrics import metrics
 from models import VPROFilm
-from text_utils import sanitize_description, is_valid_description
+from text_utils import sanitize_description, is_valid_description, extract_year_from_text
 
 logger = logging.getLogger(__name__)
 
@@ -375,11 +375,13 @@ class VPROPageScraper:
                         description = sanitized
                         logger.debug(f"Using og:description for {url}")
 
-            # Extract year
+            # Extract year - only use title if it has parenthesized year like "Movie (2019)"
+            # Otherwise use page text which is more likely to have structured release year
             year = None
-            year_match = re.search(r'\b(19|20)\d{2}\b', soup.get_text())
-            if year_match:
-                year = int(year_match.group())
+            if re.search(r'\(\d{4}\)', title):
+                year = extract_year_from_text(title)
+            if not year:
+                year = extract_year_from_text(soup.get_text())
 
             # Detect media type and extract ID from URL
             vpro_id = None
