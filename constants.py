@@ -70,6 +70,7 @@ PROVIDER_VERSION: Final = "3.1.2"
 # =============================================================================
 
 DEFAULT_CACHE_TTL_FOUND: Final = 30 * 24 * 60 * 60  # 30 days for found entries
+DEFAULT_CACHE_TTL_NOT_FOUND: Final = 7 * 24 * 60 * 60  # 7 days for not-found entries
 MAX_CACHE_SIZE_MB: Final = 500  # Maximum cache size in MB
 MAX_CACHE_ENTRIES: Final = 10000  # Maximum number of cached items
 
