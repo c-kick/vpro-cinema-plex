@@ -16,7 +16,7 @@ from [VPRO Cinema](https://www.vprogids.nl/cinema/) to Plex Media Server.
 - 📺 Supports both movies and series
 - 🔍 Direct NPO POMS API access with automatic credential refresh
 - 🌍 Smart title matching via TMDB — works in both directions (Translated → Original and Original → Translated)
-- 💾 Persistent caching with TTL for not-found entries
+- 💾 Persistent caching (with TTL for not-found entries)
 - 🔧 Self-healing: auto-refreshes API credentials if authentication fails
 - 🐳 Docker-ready with health checks
 - 🔗 Combines with other providers (as it only returns the `description` metadata)
