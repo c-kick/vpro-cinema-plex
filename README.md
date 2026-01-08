@@ -316,7 +316,7 @@ vpro-cinema-plex/
 | Metadata not updating after port change | Restart Plex server (known Plex bug with URL changes).                                                                                                                |
 | POMS auth errors                        | Force refresh: `docker exec vpro-plex-provider python vpro_lookup.py --refresh-credentials`                                                                           |
 | Film not found                          | Try original title: `"Der Untergang"` instead of `"Downfall"`. Or provide IMDB ID: `--imdb tt0363163`                                                                 |
-| TMDB alternate titles not working       | Verify `"tmdb_configured": true` in `/health` response.                                                                                                               |
+| TMDB alternate titles not working       | Verify `"configured": true` and `"status": "ok"` under `tmdb` in `/health/ready` response.                                                                                                               |
 
 ## Updating
 
