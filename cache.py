@@ -22,6 +22,7 @@ from typing import Optional, Dict, Any, List
 
 from constants import (
     DEFAULT_CACHE_TTL_FOUND,
+    DEFAULT_CACHE_TTL_NOT_FOUND,
     MAX_CACHE_SIZE_MB,
     MAX_CACHE_ENTRIES,
     CacheStatus,
@@ -63,7 +64,7 @@ class CacheEntry:
         """
         Check if this cache entry has expired based on TTL.
 
-        Found entries have longer TTL than not-found entries.
+        Found entries have longer TTL (30 days) than not-found entries (7 days).
 
         Returns:
             True if entry has expired
@@ -77,7 +78,9 @@ class CacheEntry:
             )
             age_seconds = (datetime.now(timezone.utc) - fetched).total_seconds()
 
-            # Only found entries are cached (not-found entries are not stored)
+            # Use shorter TTL for not-found entries
+            if self.status == CacheStatus.NOT_FOUND.value:
+                return age_seconds > DEFAULT_CACHE_TTL_NOT_FOUND
             return age_seconds > DEFAULT_CACHE_TTL_FOUND
 
         except (ValueError, AttributeError):

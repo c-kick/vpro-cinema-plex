@@ -325,8 +325,13 @@ def handle_metadata_request(req: MetadataRequest) -> dict:
     # Check cache first
     cached = cache.read(req.rating_key)
     if cached:
+        # Handle cached not-found entries (7-day TTL)
+        if cached.status == CacheStatus.NOT_FOUND.value:
+            logger.info(f"Cache hit (not-found) for {req.rating_key}")
+            metrics.inc("cache_hits", labels={"status": "not_found"})
+            return _build_empty_response(req.identifier)
         logger.info(f"Cache hit for {req.rating_key}")
-        metrics.inc("cache_hits")
+        metrics.inc("cache_hits", labels={"status": "found"})
         return _build_metadata_response(req, cached)
 
     metrics.inc("cache_misses")
@@ -382,9 +387,23 @@ def handle_metadata_request(req: MetadataRequest) -> dict:
         metrics.inc("vpro_found")
         return _build_metadata_response(req, entry)
     else:
-        # Don't cache not-found results - retry on every request
-        # This ensures newly added VPRO content is found immediately
-        logger.info(f"Not found: {title} ({year}) - omitting summary for fallback")
+        # Cache not-found results with shorter TTL (7 days vs 30 for found)
+        # This prevents hammering APIs on library refresh while still allowing
+        # newly added VPRO content to be found within a week
+        not_found_entry = CacheEntry(
+            title=title,
+            year=year,
+            description=None,
+            url=None,
+            imdb_id=imdb_id,
+            vpro_id=None,
+            media_type=media_type,
+            status=CacheStatus.NOT_FOUND.value,
+            fetched_at="",
+            last_accessed="",
+        )
+        cache.write(req.rating_key, not_found_entry)
+        logger.info(f"Not found: {title} ({year}) - cached for 7 days, omitting summary for fallback")
         metrics.inc("vpro_not_found")
         return _build_empty_response(req.identifier)
 

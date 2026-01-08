@@ -319,8 +319,8 @@ def validate_imdb_id(imdb_id: str) -> bool:
     if not imdb_id:
         return False
 
-    # IMDB IDs are tt followed by 7-8 digits
-    return bool(re.match(r'^tt\d{7,8}$', imdb_id.lower()))
+    # IMDB IDs are tt followed by 7+ digits (currently up to 8, but future-proofed)
+    return bool(re.match(r'^tt\d{7,}$', imdb_id.lower()))
 
 
 def extract_imdb_from_text(text: str) -> Optional[str]:
@@ -337,10 +337,10 @@ def extract_imdb_from_text(text: str) -> Optional[str]:
         return None
 
     patterns = [
-        r'imdb-(tt\d{7,8})',
-        r'\{imdb-(tt\d{7,8})\}',
-        r'\[(tt\d{7,8})\]',
-        r'(?<![a-z])(tt\d{7,8})(?![0-9])',
+        r'imdb-(tt\d{7,})',
+        r'\{imdb-(tt\d{7,})\}',
+        r'\[(tt\d{7,})\]',
+        r'(?<![a-z])(tt\d{7,})(?![0-9])',
     ]
 
     for pattern in patterns:
