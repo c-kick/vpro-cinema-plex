@@ -1,6 +1,6 @@
 # VPRO Cinema Metadata Provider for Plex
 
-A custom metadata provider that supplies Dutch film and TV series descriptions
+A custom metadata provider that supplies Dutch film and series descriptions
 from [VPRO Cinema](https://www.vprogids.nl/cinema/) to Plex Media Server.
 
 ![Example of the Metadata Provider in action!](https://github.com/user-attachments/assets/002b61b3-c05c-4888-a1c6-c34bf38d6dd1)
@@ -12,8 +12,8 @@ from [VPRO Cinema](https://www.vprogids.nl/cinema/) to Plex Media Server.
 
 ## Features
 
-- 🇳🇱 Dutch film and TV series reviews/descriptions from VPRO Cinema's database
-- 📺 Supports both movies and TV series
+- 🇳🇱 Dutch film and series reviews/descriptions from VPRO Cinema's database
+- 📺 Supports both movies and series
 - 🔍 Direct NPO POMS API access with automatic credential refresh
 - 🌍 Smart title matching via TMDB — works in both directions (Translated → Original and Original → Translated)
 - 💾 Persistent caching with TTL for not-found entries
@@ -351,7 +351,7 @@ Provider names also changed (added `- Movies` / `- Series` suffix).
 
 **Migration:** Remove old providers in Plex, add new URLs, update agents, restart Plex.
 
-### v3.0.0 — TV series support (two-provider architecture)
+### v3.0.0 — series support (two-provider architecture)
 
 Single provider → two providers (`/movies` and `/series`). Required by Plex API for proper secondary provider combining.
 
