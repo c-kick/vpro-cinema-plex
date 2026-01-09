@@ -86,7 +86,7 @@ Portainer often can't access local build contexts. Build the image on your serve
 
 ```bash
 cd /path/to/vpro-cinema-plex
-docker build -t vpro-cinema:latest .
+docker build -t vpro-plex-provider:latest .
 ```
 
 Add to your stack:
@@ -329,7 +329,7 @@ git pull && docker-compose down && docker-compose build --no-cache && docker-com
 ```bash
 cd /path/to/vpro-cinema-plex
 git pull
-docker build -t vpro-cinema:latest .
+docker build -t vpro-plex-provider:latest .
 # Then redeploy the stack in Portainer
 ```
 
