@@ -726,9 +726,13 @@ def search_poms_multiple(
     Unlike search_poms_api() which returns only the best match,
     this returns all valid matches with descriptions for user selection.
 
+    Note: Year parameter is accepted but NOT used for filtering.
+    Fix Match should show ALL matches regardless of year, letting
+    the user choose the correct one (e.g., original vs director's cut).
+
     Args:
         title: Title to search for
-        year: Optional release year (used for filtering, wider tolerance than normal)
+        year: Ignored - kept for API compatibility
         media_type: "film", "series", or "all"
         max_results: Maximum number of results to return (default 10)
         session: Optional shared session
@@ -759,15 +763,8 @@ def search_poms_multiple(
             if media_type != "all" and film.media_type != media_type:
                 continue
 
-            # Wider year tolerance for Fix Match (5 years instead of 2)
-            # Users may have wrong year in filename
-            if year and film.year:
-                if abs(film.year - year) > 5:
-                    logger.debug(
-                        f"POMS multiple: Skipping '{film.title}' ({film.year}) - "
-                        f"year diff {abs(film.year - year)} > 5"
-                    )
-                    continue
+            # No year filtering for Fix Match - show ALL matches
+            # User manually selects the correct version (original, redux, etc.)
 
             # Deduplicate by VPRO ID
             if film.vpro_id:
