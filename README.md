@@ -103,8 +103,14 @@ vpro-plex-provider:
     - "5100:5100"
   environment:
     - TZ=Europe/Amsterdam
-    - TMDB_API_KEY=${TMDB_API_KEY:-}
     - LOG_LEVEL=INFO
+    - TMDB_API_KEY=${TMDB_API_KEY:-}
+    - CACHE_DIR=/app/cache
+    - POMS_CACHE_FILE=/app/cache/credentials.json
+    - VPRO_RETURN_SUMMARY=${VPRO_RETURN_SUMMARY:-true}
+    - VPRO_RETURN_CONTENT_RATING=${VPRO_RETURN_CONTENT_RATING:-true}
+    - VPRO_RETURN_IMAGES=${VPRO_RETURN_IMAGES:-false}
+    - VPRO_RETURN_RATING=${VPRO_RETURN_RATING:-false}
   volumes:
     - /path/to/vpro-cinema-plex/cache:/app/cache
   networks:
@@ -231,6 +237,8 @@ curl "http://localhost:5100/library/metadata/vpro-apocalypse-now-1979-tt0078788-
 curl "http://localhost:5100/cache"
 curl "http://localhost:5100/cache?key=vpro-apocalypse-now-1979-tt0078788"
 curl -X POST "http://localhost:5100/cache/clear"
+curl -X POST "http://localhost:5100/cache/delete?key=vpro-apocalypse-now-1979-tt0078788-m"
+curl -X POST "http://localhost:5100/cache/delete?pattern=apocalypse"
 ```
 
 ### Credential management
@@ -281,7 +289,9 @@ docker-compose logs -f
 | `/series/library/metadata/matches`      | POST   | Plex match endpoint for TV shows               |
 | `/series/library/metadata/<key>/images` | GET    | Returns empty (no artwork)                     |
 | `/series/library/metadata/<key>/extras` | GET    | Returns empty (no extras)                      |
-| `/health`                               | GET    | Health check with version and config status    |
+| `/health`                               | GET    | Simple health check (version only)             |
+| `/health/ready`                         | GET    | Detailed health with checks, cache stats, config |
+| `/health/live`                          | GET    | Liveness probe (always returns ok)             |
 | `/test`                                 | GET    | Test search: `?title=X&year=Y&imdb=ttZ&type=T` |
 | `/cache`                                | GET    | List cached entries or view specific: `?key=X` |
 | `/cache/clear`                          | POST   | Clear all cached entries (preserves credentials) |
