@@ -152,6 +152,6 @@ VPRO_RETURN_CONTENT_RATING: bool = _get_bool_env("VPRO_RETURN_CONTENT_RATING", T
 # WARNING: May override images from secondary agents like Plex Movie
 VPRO_RETURN_IMAGES: bool = _get_bool_env("VPRO_RETURN_IMAGES", False)
 
-# Return VPRO appreciation rating (1-10) as Plex rating field (default: false)
-# WARNING: May override ratings from secondary agents like Plex Movie
-VPRO_RETURN_RATING: bool = _get_bool_env("VPRO_RETURN_RATING", False)
+# NOTE: VPRO appreciation rating (1-10) is extracted but NOT sent to Plex.
+# Plex ignores rating/audienceRating from custom metadata providers.
+# The rating is still available via /test endpoint and in cache files.
