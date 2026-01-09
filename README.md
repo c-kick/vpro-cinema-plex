@@ -108,8 +108,8 @@ vpro-plex-provider:
   networks:
     - your-plex-network  # Must be on same network as Plex
 ```
-
-Use container hostname for provider URLs: `http://vpro-cinema:5100/movies` and `http://vpro-cinema:5100/series`
+Note: if you use the plex network, you can use 'vpro-plex-provider' (instead of `localhost`, as in the examples below)
+to directly reference the agent in the provider URLs in Plex: `http://vpro-plex-provider:5100/movies` and `http://vpro-plex-provider:5100/series`
 
 </details>
 
@@ -316,7 +316,8 @@ vpro-cinema-plex/
 | Metadata not updating after port change | Restart Plex server (known Plex bug with URL changes).                                                                                                                |
 | POMS auth errors                        | Force refresh: `docker exec vpro-plex-provider python vpro_lookup.py --refresh-credentials`                                                                           |
 | Film not found                          | Try original title: `"Der Untergang"` instead of `"Downfall"`. Or provide IMDB ID: `--imdb tt0363163`                                                                 |
-| TMDB alternate titles not working       | Verify `"configured": true` and `"status": "ok"` under `tmdb` in `/health/ready` response.                                                                                                               |
+| TMDB alternate titles not working       | Verify `"configured": true` and `"status": "ok"` under `tmdb` in `/health/ready` response.                                                                            |
+| Still it's not working                  | Restart your Plex server.                                                                                                                                             |
 
 ## Updating
 
