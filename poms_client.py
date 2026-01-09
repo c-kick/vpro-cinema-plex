@@ -526,6 +526,12 @@ class POMSAPIClient:
         year = None
         directors = []
         vpro_rating = None
+        content_rating = None
+
+        # Check for ageRating as top-level field (Kijkwijzer)
+        age_rating = result.get("ageRating")
+        if age_rating:
+            content_rating = str(age_rating)
 
         for rel in result.get("relations", []):
             rel_type = rel.get("type", "")
@@ -543,6 +549,9 @@ class POMSAPIClient:
                     vpro_rating = int(value)
                 except ValueError:
                     pass
+            elif rel_type == "CINEMA_AGE_RATING" and value and not content_rating:
+                # Fallback: check if ageRating is in relations
+                content_rating = str(value)
 
         genres = [
             g.get("displayName", "")
@@ -595,6 +604,7 @@ class POMSAPIClient:
             vpro_id=vpro_id,
             genres=genres,
             vpro_rating=vpro_rating,
+            content_rating=content_rating,
             media_type=media_type,
         )
 

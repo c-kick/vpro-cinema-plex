@@ -59,6 +59,8 @@ class CacheEntry:
     # Lookup diagnostics
     lookup_method: Optional[str] = None  # "poms", "tmdb_alt", "web"
     discovered_imdb: Optional[str] = None  # IMDB found via TMDB lookup
+    # Content metadata
+    content_rating: Optional[str] = None  # Kijkwijzer age rating (AL, 6, 9, 12, 14, 16, 18)
 
     def is_expired(self) -> bool:
         """
@@ -110,6 +112,7 @@ class CacheEntry:
             last_accessed=data.get("last_accessed", ""),
             lookup_method=data.get("lookup_method"),
             discovered_imdb=data.get("discovered_imdb"),
+            content_rating=data.get("content_rating"),
         )
 
 

@@ -269,6 +269,10 @@ def _build_metadata_response(
     if entry.description:
         metadata["summary"] = entry.description
 
+    # Include Kijkwijzer content rating if available
+    if entry.content_rating:
+        metadata["contentRating"] = f"nl/{entry.content_rating}"
+
     # Build external GUIDs
     guids = []
     if entry.imdb_id:
@@ -381,6 +385,7 @@ def handle_metadata_request(req: MetadataRequest) -> dict:
             lookup_method=film.lookup_method,
             # Only store discovered_imdb if it differs from the effective imdb_id
             discovered_imdb=film.discovered_imdb if film.discovered_imdb and film.discovered_imdb != film.imdb_id else None,
+            content_rating=film.content_rating,
         )
         cache.write(req.rating_key, entry)
         lookup_info = f" via {film.lookup_method}" if film.lookup_method else ""
@@ -558,6 +563,7 @@ def handle_manual_match_request(req: MatchRequest) -> dict:
             fetched_at="",
             last_accessed="",
             lookup_method="manual_match",
+            content_rating=film.content_rating,
         )
         cache.write(rating_key, entry)
 
@@ -699,6 +705,7 @@ def test_search():
             "vpro_url": film.url,
             "genres": getattr(film, 'genres', []),
             "vpro_rating": getattr(film, 'vpro_rating', None),
+            "content_rating": getattr(film, 'content_rating', None),
             "description_length": len(film.description) if film.description else 0,
             "description": film.description
         }
