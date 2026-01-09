@@ -104,13 +104,13 @@ vpro-plex-provider:
   environment:
     - TZ=Europe/Amsterdam
     - LOG_LEVEL=INFO
-    - TMDB_API_KEY=${TMDB_API_KEY:-}
+    - TMDB_API_KEY=your_tmdb_api_key_here  # Optional but recommended
     - CACHE_DIR=/app/cache
     - POMS_CACHE_FILE=/app/cache/credentials.json
-    - VPRO_RETURN_SUMMARY=${VPRO_RETURN_SUMMARY:-true}
-    - VPRO_RETURN_CONTENT_RATING=${VPRO_RETURN_CONTENT_RATING:-true}
-    - VPRO_RETURN_IMAGES=${VPRO_RETURN_IMAGES:-false}
-    - VPRO_RETURN_RATING=${VPRO_RETURN_RATING:-false}
+    - VPRO_RETURN_SUMMARY=true        # Dutch descriptions (main feature)
+    - VPRO_RETURN_CONTENT_RATING=true # Kijkwijzer age ratings
+    - VPRO_RETURN_IMAGES=false        # Set to true to use VPRO posters
+    - VPRO_RETURN_RATING=false        # Set to true to use VPRO ratings (1-10)
   volumes:
     - /path/to/vpro-cinema-plex/cache:/app/cache
   networks:
