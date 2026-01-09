@@ -27,6 +27,10 @@ from constants import (
     MAX_CACHE_ENTRIES,
     CacheStatus,
 )
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from models import VPROFilm
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +121,100 @@ class CacheEntry:
             content_rating=data.get("content_rating"),
             vpro_rating=data.get("vpro_rating"),
             images=data.get("images"),
+        )
+
+    @classmethod
+    def from_vpro_film(
+        cls,
+        film: "VPROFilm",
+        status: str = None,
+        lookup_method: str = None,
+        sanitize_desc: bool = True,
+    ) -> "CacheEntry":
+        """
+        Create CacheEntry from VPROFilm.
+
+        Factory method to reduce duplication when caching VPRO results.
+
+        Args:
+            film: VPROFilm object with metadata
+            status: Cache status (defaults to FOUND if film has description)
+            lookup_method: Override lookup method (defaults to film.lookup_method)
+            sanitize_desc: Whether to sanitize description (default True)
+
+        Returns:
+            CacheEntry ready for caching
+        """
+        # Import here to avoid circular import at module level
+        from text_utils import sanitize_description
+
+        # Determine effective values
+        effective_imdb = film.imdb_id or film.discovered_imdb
+        effective_status = status or (
+            CacheStatus.FOUND.value if film.description else CacheStatus.NOT_FOUND.value
+        )
+
+        # Sanitize description if needed
+        desc = film.description
+        if desc and sanitize_desc:
+            desc = sanitize_description(desc)
+
+        # Only store discovered_imdb if it's new information (differs from imdb_id)
+        discovered = film.discovered_imdb
+        if discovered and discovered == film.imdb_id:
+            discovered = None
+
+        return cls(
+            title=film.title,
+            year=film.year,
+            description=desc,
+            url=film.url,
+            imdb_id=effective_imdb,
+            vpro_id=film.vpro_id,
+            media_type=film.media_type,
+            status=effective_status,
+            fetched_at="",
+            last_accessed="",
+            lookup_method=lookup_method or film.lookup_method,
+            discovered_imdb=discovered,
+            content_rating=film.content_rating,
+            vpro_rating=film.vpro_rating,
+            images=film.images or None,
+        )
+
+    @classmethod
+    def not_found(
+        cls,
+        title: str,
+        year: Optional[int] = None,
+        imdb_id: Optional[str] = None,
+        media_type: str = "film",
+    ) -> "CacheEntry":
+        """
+        Create a NOT_FOUND cache entry.
+
+        Factory method for caching negative lookup results.
+
+        Args:
+            title: Original search title
+            year: Original search year
+            imdb_id: Original search IMDB ID
+            media_type: "film" or "series"
+
+        Returns:
+            CacheEntry with NOT_FOUND status
+        """
+        return cls(
+            title=title,
+            year=year,
+            description=None,
+            url=None,
+            imdb_id=imdb_id,
+            vpro_id=None,
+            media_type=media_type,
+            status=CacheStatus.NOT_FOUND.value,
+            fetched_at="",
+            last_accessed="",
         )
 
 
@@ -216,6 +314,37 @@ class FileCache:
                 # Lock not available, proceed anyway
                 pass
 
+    def _extract_key_components(self, key: str) -> tuple:
+        """
+        Extract title-year prefix and media type from cache key.
+
+        Args:
+            key: Cache key like 'vpro-die-hard-1988-none-m'
+
+        Returns:
+            Tuple of (title_year_prefix, type_suffix) or (None, None) if invalid
+        """
+        parts = key.rsplit("-", 2)
+        if len(parts) < 2:
+            return None, None
+
+        if parts[-1] in ("m", "s"):
+            return parts[0], parts[-1]
+
+        # No type suffix - extract prefix before 'none'
+        if "-none" in key:
+            return key.rsplit("-none", 1)[0], "m"
+
+        return None, None
+
+    def _has_type_suffix(self, key: str) -> bool:
+        """Check if key has media type suffix (-m or -s)."""
+        return key.endswith("-m") or key.endswith("-s")
+
+    def _has_none_imdb(self, key: str) -> bool:
+        """Check if key has 'none' as IMDB placeholder."""
+        return "-none-" in key or key.endswith("-none")
+
     def _find_by_title_year(self, key: str) -> Path:
         """
         Find cache entry by title+year when IMDB is 'none'.
@@ -230,41 +359,22 @@ class FileCache:
         Returns:
             Path to matching cache file, or non-existent Path if not found
         """
-        # Extract title-year prefix: "vpro-die-hard-1988" from "vpro-die-hard-1988-none-m"
-        # Key format: vpro-{title}-{year}-{imdb}-{type}
-        parts = key.rsplit("-", 2)  # Split from right: [..., 'none', 'm'] or [..., 'none']
-        if len(parts) < 2:
+        title_year_prefix, type_suffix = self._extract_key_components(key)
+        if not title_year_prefix:
             logger.debug(f"Cache fallback: key '{key}' has insufficient parts")
             return Path("/nonexistent")
-
-        # Get the prefix before the IMDB part
-        if parts[-1] in ("m", "s"):
-            # Has type suffix: vpro-title-year-none-m
-            title_year_prefix = parts[0]  # "vpro-die-hard-1988"
-            type_suffix = parts[-1]
-        else:
-            # No type suffix: vpro-title-year-none
-            title_year_prefix = key.rsplit("-none", 1)[0]
-            type_suffix = "m"  # Default to movie
 
         logger.debug(f"Cache fallback search: prefix='{title_year_prefix}', type='{type_suffix}'")
 
         # Search all shards for matching files
         try:
-            shard_count = 0
-            file_count = 0
-            for shard in self._cache_dir.iterdir():
-                if not shard.is_dir() or len(shard.name) != 2:
+            for cache_file in self._cache_dir.glob(f"**/*.json"):
+                if not cache_file.parent.name or len(cache_file.parent.name) != 2:
                     continue
-                shard_count += 1
-                for cache_file in shard.glob("*.json"):
-                    file_count += 1
-                    filename = cache_file.stem
-                    # Check if filename starts with title-year and ends with type
-                    if filename.startswith(title_year_prefix) and f"-{type_suffix}_" in filename:
-                        logger.info(f"Cache fallback HIT: {key} -> {filename}")
-                        return cache_file
-            logger.debug(f"Cache fallback: searched {shard_count} shards, {file_count} files, no match")
+                filename = cache_file.stem
+                if filename.startswith(title_year_prefix) and f"-{type_suffix}_" in filename:
+                    logger.info(f"Cache fallback HIT: {key} -> {filename}")
+                    return cache_file
         except OSError as e:
             logger.warning(f"Cache fallback error: {e}")
 
@@ -277,6 +387,40 @@ class FileCache:
                 fcntl.flock(file_handle.fileno(), fcntl.LOCK_UN)
             except (IOError, OSError):
                 pass
+
+    def _resolve_cache_path(self, key: str) -> Optional[Path]:
+        """
+        Resolve cache path with backward compatibility fallbacks.
+
+        Tries multiple strategies:
+        1. Exact key match
+        2. Key with default type suffix (-m) for old keys
+        3. Title+year search for keys with 'none' IMDB
+
+        Args:
+            key: Cache key to resolve
+
+        Returns:
+            Path to cache file if found, None otherwise
+        """
+        # Strategy 1: Exact key
+        path = self._get_cache_path(key)
+        if path.exists():
+            return path
+
+        # Strategy 2: Add default type suffix if missing
+        if not self._has_type_suffix(key):
+            path = self._get_cache_path(key + "-m")
+            if path.exists():
+                return path
+
+        # Strategy 3: Search by title+year for 'none' IMDB keys
+        if self._has_none_imdb(key):
+            path = self._find_by_title_year(key)
+            if path.exists():
+                return path
+
+        return None
 
     def read(self, key: str) -> Optional[CacheEntry]:
         """
@@ -293,17 +437,8 @@ class FileCache:
         Returns:
             CacheEntry if found and valid, None otherwise
         """
-        cache_path = self._get_cache_path(key)
-
-        # Backward compatibility: if key doesn't have type suffix, try with -m
-        if not cache_path.exists() and not (key.endswith("-m") or key.endswith("-s")):
-            cache_path = self._get_cache_path(key + "-m")
-
-        # Fallback: if key has 'none' for IMDB, search for matching title+year with any IMDB
-        if not cache_path.exists() and ("-none-" in key or key.endswith("-none")):
-            cache_path = self._find_by_title_year(key)
-
-        if not cache_path.exists():
+        cache_path = self._resolve_cache_path(key)
+        if not cache_path:
             return None
 
         try:

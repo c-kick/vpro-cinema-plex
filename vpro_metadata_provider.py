@@ -53,7 +53,6 @@ from credentials import get_credential_manager
 from text_utils import (
     normalize_for_cache_key,
     validate_rating_key,
-    sanitize_description,
     extract_imdb_from_text,
     extract_year_from_text,
 )
@@ -173,9 +172,18 @@ def generate_rating_key(
     return f"vpro-{sanitized_title}-{year_str}-{imdb_str}-{type_char}"
 
 
+# Rating key pattern: vpro-{title}-{year}-{imdb|none}-{m|s}
+# Examples: vpro-die-hard-1988-tt0095016-m, vpro-breaking-bad-2008-none-s
+RATING_KEY_PATTERN = re.compile(
+    r'^vpro-(?P<title>.+)-(?P<year>\d+)-(?P<imdb>tt\d+|none)-(?P<type>[ms])$'
+)
+
+
 def parse_rating_key(rating_key: str) -> dict:
     """
     Parse a rating key back into components.
+
+    Format: vpro-{title}-{year}-{imdb|none}-{m|s}
 
     Backwards compatible: keys without type suffix are treated as films.
 
@@ -190,15 +198,19 @@ def parse_rating_key(rating_key: str) -> dict:
     if not rating_key or not rating_key.startswith("vpro-"):
         return result
 
-    key_part = rating_key[5:]  # Remove "vpro-"
+    # Try the standard format first (most common)
+    match = RATING_KEY_PATTERN.match(rating_key)
+    if match:
+        result["title"] = match.group("title").replace("-", " ")
+        year_val = int(match.group("year"))
+        result["year"] = year_val if year_val > 0 else None
+        imdb = match.group("imdb")
+        result["imdb_id"] = imdb if imdb != "none" else None
+        result["media_type"] = "series" if match.group("type") == "s" else "film"
+        return result
 
-    # Extract media type from end (new format: -m or -s)
-    if key_part.endswith("-m"):
-        result["media_type"] = "film"
-        key_part = key_part[:-2]
-    elif key_part.endswith("-s"):
-        result["media_type"] = "series"
-        key_part = key_part[:-2]
+    # Fallback: Parse legacy format without type suffix
+    key_part = rating_key[5:]  # Remove "vpro-"
 
     # Extract IMDB ID from end
     imdb_match = re.search(r'-(tt\d+)$', key_part)
@@ -244,6 +256,36 @@ class MetadataRequest:
     def base_path(self) -> str:
         """Get base URL path based on type."""
         return "/series" if self.provider_type == "tv" else "/movies"
+
+
+def _build_media_container(
+    identifier: str,
+    items: list = None,
+    item_key: str = "Metadata",
+) -> dict:
+    """
+    Build a Plex MediaContainer response.
+
+    Factory function to reduce duplication in response building.
+
+    Args:
+        identifier: Provider identifier
+        items: List of items (metadata, images, etc.)
+        item_key: Key name for items ("Metadata", "Image", etc.)
+
+    Returns:
+        MediaContainer dict
+    """
+    items = items or []
+    return {
+        "MediaContainer": {
+            "offset": 0,
+            "totalSize": len(items),
+            "identifier": identifier,
+            "size": len(items),
+            item_key: items
+        }
+    }
 
 
 def _build_metadata_response(
@@ -292,28 +334,19 @@ def _build_metadata_response(
     if guids:
         metadata["Guid"] = guids
 
-    return {
-        "MediaContainer": {
-            "offset": 0,
-            "totalSize": 1,
-            "identifier": req.identifier,
-            "size": 1,
-            "Metadata": [metadata]
-        }
-    }
+    return _build_media_container(req.identifier, [metadata])
 
 
 def _build_empty_response(identifier: str) -> dict:
     """Build empty response for errors or not-found cases."""
-    return {
-        "MediaContainer": {
-            "offset": 0,
-            "totalSize": 0,
-            "identifier": identifier,
-            "size": 0,
-            "Metadata": []
-        }
-    }
+    return _build_media_container(identifier)
+
+
+def _map_vpro_image_type(vpro_type: str) -> str:
+    """Map VPRO image type to Plex type."""
+    if vpro_type == "PROMO_PORTRAIT":
+        return "poster"
+    return "art"  # backdrop/fanart for PICTURE, PROMO_LANDSCAPE, etc.
 
 
 def _build_images_response(rating_key: str, identifier: str) -> dict:
@@ -324,57 +357,24 @@ def _build_images_response(rating_key: str, identifier: str) -> dict:
     otherwise returns empty.
     """
     if not VPRO_RETURN_IMAGES:
-        return {
-            "MediaContainer": {
-                "offset": 0,
-                "totalSize": 0,
-                "identifier": identifier,
-                "size": 0,
-                "Image": []
-            }
-        }
+        return _build_media_container(identifier, item_key="Image")
 
     # Try to get images from cache
     cached = cache.read(rating_key)
     if not cached or not cached.images:
-        return {
-            "MediaContainer": {
-                "offset": 0,
-                "totalSize": 0,
-                "identifier": identifier,
-                "size": 0,
-                "Image": []
-            }
-        }
+        return _build_media_container(identifier, item_key="Image")
 
     # Build Plex image list
-    # Plex expects: type (poster/art/banner), url, thumb (optional), ratingKey
-    plex_images = []
-    for i, img in enumerate(cached.images):
-        img_type = img.get("type", "PICTURE")
-        # Map VPRO image types to Plex types
-        if img_type == "PROMO_PORTRAIT":
-            plex_type = "poster"
-        elif img_type in ("PICTURE", "PROMO_LANDSCAPE"):
-            plex_type = "art"  # backdrop/fanart
-        else:
-            plex_type = "art"
-
-        plex_images.append({
-            "type": plex_type,
+    plex_images = [
+        {
+            "type": _map_vpro_image_type(img.get("type", "PICTURE")),
             "url": img.get("url"),
             "ratingKey": f"{rating_key}-img-{i}",
-        })
-
-    return {
-        "MediaContainer": {
-            "offset": 0,
-            "totalSize": len(plex_images),
-            "identifier": identifier,
-            "size": len(plex_images),
-            "Image": plex_images
         }
-    }
+        for i, img in enumerate(cached.images)
+    ]
+
+    return _build_media_container(identifier, plex_images, item_key="Image")
 
 
 def handle_metadata_request(req: MetadataRequest) -> dict:
@@ -440,26 +440,7 @@ def handle_metadata_request(req: MetadataRequest) -> dict:
 
     # Build and cache result
     if film and film.description:
-        # Use discovered_imdb if no original imdb_id was provided
-        effective_imdb = film.imdb_id or film.discovered_imdb
-        entry = CacheEntry(
-            title=film.title,
-            year=film.year,
-            description=sanitize_description(film.description),
-            url=film.url,
-            imdb_id=effective_imdb,
-            vpro_id=film.vpro_id,
-            media_type=film.media_type,
-            status=CacheStatus.FOUND.value,
-            fetched_at="",
-            last_accessed="",
-            lookup_method=film.lookup_method,
-            # Only store discovered_imdb if it differs from the effective imdb_id
-            discovered_imdb=film.discovered_imdb if film.discovered_imdb and film.discovered_imdb != film.imdb_id else None,
-            content_rating=film.content_rating,
-            vpro_rating=film.vpro_rating,
-            images=film.images if film.images else None,
-        )
+        entry = CacheEntry.from_vpro_film(film)
         cache.write(req.rating_key, entry)
         lookup_info = f" via {film.lookup_method}" if film.lookup_method else ""
         logger.info(f"Found: {film.title} ({film.year}) [{film.media_type}] - {len(film.description)} chars{lookup_info}")
@@ -469,18 +450,7 @@ def handle_metadata_request(req: MetadataRequest) -> dict:
         # Cache not-found results with shorter TTL (7 days vs 30 for found)
         # This prevents hammering APIs on library refresh while still allowing
         # newly added VPRO content to be found within a week
-        not_found_entry = CacheEntry(
-            title=title,
-            year=year,
-            description=None,
-            url=None,
-            imdb_id=imdb_id,
-            vpro_id=None,
-            media_type=media_type,
-            status=CacheStatus.NOT_FOUND.value,
-            fetched_at="",
-            last_accessed="",
-        )
+        not_found_entry = CacheEntry.not_found(title, year, imdb_id, media_type)
         cache.write(req.rating_key, not_found_entry)
         logger.info(f"Not found: {title} ({year}) - cached for 7 days, omitting summary for fallback")
         metrics.inc("vpro_not_found")
@@ -638,22 +608,7 @@ def handle_manual_match_request(req: MatchRequest) -> dict:
         metadata_list.append(metadata)
 
         # Pre-cache the result for faster metadata fetch when user selects it
-        entry = CacheEntry(
-            title=film.title,
-            year=film.year,
-            description=film.description,
-            url=film.url,
-            imdb_id=film.imdb_id,
-            vpro_id=film.vpro_id,
-            media_type=film.media_type,
-            status=CacheStatus.FOUND.value,
-            fetched_at="",
-            last_accessed="",
-            lookup_method="manual_match",
-            content_rating=film.content_rating,
-            vpro_rating=film.vpro_rating,
-            images=film.images if film.images else None,
-        )
+        entry = CacheEntry.from_vpro_film(film, lookup_method="manual_match", sanitize_desc=False)
         cache.write(rating_key, entry)
 
     logger.info(

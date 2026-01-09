@@ -284,3 +284,44 @@ def create_session(
         Configured RateLimitedSession
     """
     return RateLimitedSession(timeout=timeout, user_agent=user_agent)
+
+
+class SessionAwareComponent:
+    """
+    Mixin for components that optionally manage HTTP sessions.
+
+    Provides standardized session ownership tracking and cleanup.
+    Use this mixin to avoid duplicating the session management pattern
+    across multiple classes.
+
+    Usage:
+        class MyClient(SessionAwareComponent):
+            def __init__(self, session=None):
+                self.init_session(session, timeout=15.0)
+
+            def do_something(self):
+                response = self.session.get(...)
+    """
+
+    session: RateLimitedSession
+    _owns_session: bool
+
+    def init_session(
+        self,
+        session: RateLimitedSession = None,
+        timeout: float = 30.0,
+    ) -> None:
+        """
+        Initialize session with ownership tracking.
+
+        Args:
+            session: Optional existing session to use
+            timeout: Timeout for new session if created
+        """
+        self.session = session or create_session(timeout=timeout)
+        self._owns_session = session is None
+
+    def close(self) -> None:
+        """Close session if we own it."""
+        if self._owns_session:
+            self.session.close()

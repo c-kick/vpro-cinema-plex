@@ -9,9 +9,11 @@ import re
 import html
 import hashlib
 import unicodedata
-from typing import Optional
+from typing import Optional, List, Any, Callable, TypeVar
 
 from constants import MAX_TITLE_LENGTH
+
+T = TypeVar('T')
 
 
 # =============================================================================
@@ -162,6 +164,79 @@ def title_similarity(title1: str, title2: str) -> float:
     union = words1 | words2
 
     return len(intersection) / len(union)
+
+
+# =============================================================================
+# Deduplication Utilities
+# =============================================================================
+
+def deduplicate_preserving_order(
+    items: List[T],
+    key_func: Callable[[T], Any] = None
+) -> List[T]:
+    """
+    Remove duplicates from a list while preserving order.
+
+    Args:
+        items: List of items to deduplicate
+        key_func: Optional function to extract comparison key from items.
+                  If None, items are compared directly.
+
+    Returns:
+        Deduplicated list with original order preserved
+
+    Examples:
+        >>> deduplicate_preserving_order([1, 2, 2, 3, 1])
+        [1, 2, 3]
+        >>> deduplicate_preserving_order(['A', 'a', 'B'], key_func=str.lower)
+        ['A', 'B']
+    """
+    seen = set()
+    result = []
+    for item in items:
+        check_key = key_func(item) if key_func else item
+        if check_key not in seen:
+            seen.add(check_key)
+            result.append(item)
+    return result
+
+
+def build_unique_list(key_func: Callable[[str], Any] = None) -> tuple:
+    """
+    Create a list builder that tracks seen items for deduplication.
+
+    Returns a tuple of (list, add_func) where add_func adds items
+    only if they haven't been seen before.
+
+    Args:
+        key_func: Optional function to normalize items for comparison.
+                  Common: str.lower for case-insensitive deduplication.
+
+    Returns:
+        Tuple of (result_list, add_function)
+
+    Example:
+        titles, add_title = build_unique_list(str.lower)
+        add_title("Hello")
+        add_title("HELLO")  # Ignored - already seen as "hello"
+        add_title("World")
+        # titles == ["Hello", "World"]
+    """
+    seen = set()
+    result = []
+
+    def add_item(item: str) -> bool:
+        """Add item if not already seen. Returns True if added."""
+        if not item:
+            return False
+        check_key = key_func(item) if key_func else item
+        if check_key not in seen:
+            seen.add(check_key)
+            result.append(item)
+            return True
+        return False
+
+    return result, add_item
 
 
 # =============================================================================
