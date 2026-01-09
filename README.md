@@ -110,7 +110,7 @@ vpro-plex-provider:
     - VPRO_RETURN_SUMMARY=true        # Dutch descriptions (main feature)
     - VPRO_RETURN_CONTENT_RATING=true # Kijkwijzer age ratings
     - VPRO_RETURN_IMAGES=false        # Set to true to use VPRO posters
-    - VPRO_RETURN_RATING=false        # Set to true to use VPRO ratings (1-10)
+    - VPRO_RETURN_RATING=false        # Experimental: VPRO ratings (see limitations)
   volumes:
     - /path/to/vpro-cinema-plex/cache:/app/cache
   networks:
@@ -273,7 +273,7 @@ docker-compose logs -f
 | `VPRO_RETURN_SUMMARY`       | true               | Return VPRO Dutch summary/description                       |
 | `VPRO_RETURN_CONTENT_RATING`| true               | Return Kijkwijzer content rating (AL, 6, 9, 12, 14, 16, 18) |
 | `VPRO_RETURN_IMAGES`        | false              | Return VPRO images (may override secondary agent)           |
-| `VPRO_RETURN_RATING`        | false              | Return VPRO appreciation rating (1-10, may override secondary agent) |
+| `VPRO_RETURN_RATING`        | false              | Return VPRO rating (experimental, see [Limitations](#limitations)) |
 
 ## API Reference
 
@@ -385,7 +385,7 @@ Single provider → two providers (`/movies` and `/series`). Required by Plex AP
   - `VPRO_RETURN_SUMMARY` (default: true) — Dutch descriptions
   - `VPRO_RETURN_CONTENT_RATING` (default: true) — Kijkwijzer ratings
   - `VPRO_RETURN_IMAGES` (default: false) — VPRO poster images
-  - `VPRO_RETURN_RATING` (default: false) — VPRO appreciation ratings (1-10)
+  - `VPRO_RETURN_RATING` (default: false) — VPRO appreciation ratings (experimental, see [Limitations](#limitations))
 - **Fix Match thumbnails** — Images now display in Plex's Fix Match dialog when `VPRO_RETURN_IMAGES=true`
 - **Health endpoint improvements** — `/health/ready` now shows configured feature flags
 - **Selective cache deletion** — New `/cache/delete` endpoint for targeted cache management
@@ -407,6 +407,7 @@ Single provider → two providers (`/movies` and `/series`). Required by Plex AP
 - **POMS API is undocumented** — Not officially supported by NPO; may change without notice
 - **Not all content covered** — Only films/series reviewed by VPRO Cinema
 - **Artwork optional** — Disabled by default; enable `VPRO_RETURN_IMAGES` or use Plex Movie fallback
+- **Ratings display limited** — Plex's Custom Metadata Provider API may store `audienceRating` values, but the rating *icon* displayed in the UI is controlled by the library's "Ratings Source" setting (Rotten Tomatoes, IMDb, or TMDb), not by the provider. Custom `ratingImage` URI schemes are not supported. This is a Plex architectural limitation — see the [Plex Dev/API Forum](https://forums.plex.tv/c/dev-api-corner/) for updates
 - **Web search fallback** — May hit rate limits or CAPTCHAs
 
 ## License

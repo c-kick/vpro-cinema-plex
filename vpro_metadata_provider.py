@@ -278,9 +278,10 @@ def _build_metadata_response(
         metadata["contentRating"] = f"nl/{entry.content_rating}"
 
     # Include VPRO rating if enabled and available
+    # NOTE: Plex may store this value but displays icons based on library settings,
+    # not custom providers. See README for details on this Plex limitation.
     if VPRO_RETURN_RATING and entry.vpro_rating:
-        # Plex rating is 0-10 scale, VPRO is 1-10
-        metadata["rating"] = float(entry.vpro_rating)
+        metadata["audienceRating"] = float(entry.vpro_rating)
 
     # Build external GUIDs
     guids = []
@@ -1123,7 +1124,7 @@ def readiness_check():
         "summary": VPRO_RETURN_SUMMARY,
         "content_rating": VPRO_RETURN_CONTENT_RATING,
         "images": VPRO_RETURN_IMAGES,
-        "rating": VPRO_RETURN_RATING,
+        "rating": VPRO_RETURN_RATING,  # Note: Plex may not display (see README)
     }
 
     status_code = 200 if healthy else 503
