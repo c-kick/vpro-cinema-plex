@@ -609,6 +609,20 @@ def handle_manual_match_request(req: MatchRequest) -> dict:
         if film.year:
             metadata["year"] = film.year
 
+        # Include thumbnail for Fix Match UI when images are enabled
+        if VPRO_RETURN_IMAGES and film.images:
+            # Find first poster/portrait image, or fall back to any image
+            thumb_url = None
+            for img in film.images:
+                img_type = img.get("type", "")
+                if img_type == "PROMO_PORTRAIT":
+                    thumb_url = img.get("url")
+                    break
+            if not thumb_url and film.images:
+                thumb_url = film.images[0].get("url")
+            if thumb_url:
+                metadata["thumb"] = thumb_url
+
         # Include external GUIDs if available
         guids = []
         if film.imdb_id:
