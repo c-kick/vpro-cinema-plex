@@ -22,6 +22,7 @@ class VPROFilm:
     genres: List[str] = field(default_factory=list)
     vpro_rating: Optional[int] = None
     content_rating: Optional[str] = None  # Kijkwijzer age rating (AL, 6, 9, 12, 14, 16, 18)
+    images: List[Dict[str, str]] = field(default_factory=list)  # [{type, url, title}]
     media_type: str = "film"  # "film" or "series"
     # Lookup diagnostics
     lookup_method: Optional[str] = None  # "poms", "tmdb_alt", "web"
@@ -40,6 +41,7 @@ class VPROFilm:
             'genres': self.genres,
             'vpro_rating': self.vpro_rating,
             'content_rating': self.content_rating,
+            'images': self.images,
             'media_type': self.media_type,
             'lookup_method': self.lookup_method,
             'discovered_imdb': self.discovered_imdb,
