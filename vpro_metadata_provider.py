@@ -279,8 +279,8 @@ def _build_metadata_response(
 
     # Include VPRO rating if enabled and available
     if VPRO_RETURN_RATING and entry.vpro_rating:
-        # Plex rating is 0-10 scale, VPRO is 1-10
-        metadata["rating"] = float(entry.vpro_rating)
+        # Plex uses audienceRating for numeric scores (0-10 scale)
+        metadata["audienceRating"] = float(entry.vpro_rating)
 
     # Build external GUIDs
     guids = []
