@@ -515,17 +515,6 @@ class POMSAPIClient:
 
         result = item.get("result", {})
 
-        # DEBUG: Log full structure to discover available fields
-        logger.info(f"DEBUG: item top-level keys = {list(item.keys())}")
-        logger.info(f"DEBUG: result top-level keys = {list(result.keys())}")
-        relation_types = [r.get("type") for r in result.get("relations", [])]
-        logger.info(f"DEBUG: relation types = {relation_types}")
-        # Check for any field containing 'age', 'rating', 'kijk' (case insensitive)
-        for key, value in result.items():
-            key_lower = key.lower()
-            if any(x in key_lower for x in ['age', 'rating', 'kijk', 'leeftijd']):
-                logger.info(f"DEBUG: potential rating field '{key}' = {value}")
-
         item_type = result.get("type")
         if item_type == "MOVIE":
             media_type = "film"
@@ -538,11 +527,6 @@ class POMSAPIClient:
         directors = []
         vpro_rating = None
         content_rating = None
-
-        # Check for ageRating as top-level field (Kijkwijzer)
-        age_rating = result.get("ageRating")
-        if age_rating:
-            content_rating = str(age_rating)
 
         for rel in result.get("relations", []):
             rel_type = rel.get("type", "")
@@ -560,8 +544,8 @@ class POMSAPIClient:
                     vpro_rating = int(value)
                 except ValueError:
                     pass
-            elif rel_type == "CINEMA_AGE_RATING" and value and not content_rating:
-                # Fallback: check if ageRating is in relations
+            elif rel_type == "CINEMA_AGERATING" and value and not content_rating:
+                # Kijkwijzer age rating (e.g., "16", "12", "AL")
                 content_rating = str(value)
 
         genres = [
