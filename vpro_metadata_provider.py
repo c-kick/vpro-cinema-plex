@@ -778,6 +778,7 @@ def test_search():
             "genres": getattr(film, 'genres', []),
             "vpro_rating": getattr(film, 'vpro_rating', None),
             "content_rating": getattr(film, 'content_rating', None),
+            "images": getattr(film, 'images', []),
             "description_length": len(film.description) if film.description else 0,
             "description": film.description
         }
