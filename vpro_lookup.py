@@ -217,6 +217,7 @@ Examples:
         print(f"  Type: {film.media_type}")
         print(f"  Director: {film.director or 'Unknown'}")
         print(f"  Rating: {film.vpro_rating}/10" if film.vpro_rating else "  Rating: N/A")
+        print(f"  Age Rating: {film.content_rating}" if film.content_rating else "  Age Rating: N/A")
         print(f"  VPRO ID: {film.vpro_id or 'Unknown'}")
         print(f"  URL: {film.url or 'Unknown'}")
         print(f"  Genres: {', '.join(film.genres) if film.genres else 'Unknown'}")

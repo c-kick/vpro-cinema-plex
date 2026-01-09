@@ -5,8 +5,19 @@ This module centralizes all magic strings/numbers and provides type-safe
 enums for media types and cache status.
 """
 
+import os
 from enum import Enum
 from typing import Final
+
+
+def _get_bool_env(key: str, default: bool = False) -> bool:
+    """Get boolean from environment variable."""
+    value = os.environ.get(key, "").lower()
+    if value in ("true", "1", "yes", "on"):
+        return True
+    if value in ("false", "0", "no", "off"):
+        return False
+    return default
 
 # =============================================================================
 # Enums
@@ -62,7 +73,7 @@ PROVIDER_IDENTIFIER: Final = "tv.plex.agents.custom.vpro.cinema"
 PROVIDER_IDENTIFIER_TV: Final = "tv.plex.agents.custom.vpro.cinema.tv"
 PROVIDER_TITLE: Final = "VPRO Cinema (Dutch Summaries) - Movies"
 PROVIDER_TITLE_TV: Final = "VPRO Cinema (Dutch Summaries) - Series"
-PROVIDER_VERSION: Final = "3.2.0"
+PROVIDER_VERSION: Final = "3.3.0"
 
 
 # =============================================================================
@@ -120,3 +131,27 @@ TMDB_API_BASE: Final = "https://api.themoviedb.org/3"
 
 DEFAULT_POMS_API_KEY: Final = "ione7ahfij"
 DEFAULT_POMS_API_SECRET: Final = "aag9veesei"
+
+
+# =============================================================================
+# Feature Flags (configurable via environment)
+# =============================================================================
+# These control which metadata fields are returned to Plex.
+# By default, summary and contentRating are returned, allowing
+# secondary agents (Plex Movie/Series) to provide artwork and ratings.
+
+# Return VPRO Dutch summary/description to Plex (default: true)
+# This is the primary feature of this provider
+VPRO_RETURN_SUMMARY: bool = _get_bool_env("VPRO_RETURN_SUMMARY", True)
+
+# Return Kijkwijzer content rating (AL, 6, 9, 12, 14, 16, 18) to Plex (default: true)
+# Dutch age classification system similar to MPAA ratings
+VPRO_RETURN_CONTENT_RATING: bool = _get_bool_env("VPRO_RETURN_CONTENT_RATING", True)
+
+# Return VPRO images (posters) to Plex (default: false)
+# WARNING: May override images from secondary agents like Plex Movie
+VPRO_RETURN_IMAGES: bool = _get_bool_env("VPRO_RETURN_IMAGES", False)
+
+# Return VPRO appreciation rating (1-10) as Plex rating field (default: false)
+# WARNING: May override ratings from secondary agents like Plex Movie
+VPRO_RETURN_RATING: bool = _get_bool_env("VPRO_RETURN_RATING", False)

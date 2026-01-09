@@ -43,6 +43,10 @@ from constants import (
     PROVIDER_TITLE,
     PROVIDER_TITLE_TV,
     PROVIDER_VERSION,
+    VPRO_RETURN_SUMMARY,
+    VPRO_RETURN_CONTENT_RATING,
+    VPRO_RETURN_IMAGES,
+    VPRO_RETURN_RATING,
 )
 from cache import FileCache, CacheEntry
 from credentials import get_credential_manager
@@ -265,9 +269,18 @@ def _build_metadata_response(
         "type": plex_type,
     }
 
-    # Only include summary if we have a description
-    if entry.description:
+    # Only include summary if enabled and we have a description
+    if VPRO_RETURN_SUMMARY and entry.description:
         metadata["summary"] = entry.description
+
+    # Include Kijkwijzer content rating if enabled and available
+    if VPRO_RETURN_CONTENT_RATING and entry.content_rating:
+        metadata["contentRating"] = f"nl/{entry.content_rating}"
+
+    # Include VPRO rating if enabled and available
+    if VPRO_RETURN_RATING and entry.vpro_rating:
+        # Plex rating is 0-10 scale, VPRO is 1-10
+        metadata["rating"] = float(entry.vpro_rating)
 
     # Build external GUIDs
     guids = []
@@ -298,6 +311,67 @@ def _build_empty_response(identifier: str) -> dict:
             "identifier": identifier,
             "size": 0,
             "Metadata": []
+        }
+    }
+
+
+def _build_images_response(rating_key: str, identifier: str) -> dict:
+    """
+    Build images response from cached data.
+
+    Returns VPRO images if VPRO_RETURN_IMAGES is enabled and images exist in cache,
+    otherwise returns empty.
+    """
+    if not VPRO_RETURN_IMAGES:
+        return {
+            "MediaContainer": {
+                "offset": 0,
+                "totalSize": 0,
+                "identifier": identifier,
+                "size": 0,
+                "Image": []
+            }
+        }
+
+    # Try to get images from cache
+    cached = cache.read(rating_key)
+    if not cached or not cached.images:
+        return {
+            "MediaContainer": {
+                "offset": 0,
+                "totalSize": 0,
+                "identifier": identifier,
+                "size": 0,
+                "Image": []
+            }
+        }
+
+    # Build Plex image list
+    # Plex expects: type (poster/art/banner), url, thumb (optional), ratingKey
+    plex_images = []
+    for i, img in enumerate(cached.images):
+        img_type = img.get("type", "PICTURE")
+        # Map VPRO image types to Plex types
+        if img_type == "PROMO_PORTRAIT":
+            plex_type = "poster"
+        elif img_type in ("PICTURE", "PROMO_LANDSCAPE"):
+            plex_type = "art"  # backdrop/fanart
+        else:
+            plex_type = "art"
+
+        plex_images.append({
+            "type": plex_type,
+            "url": img.get("url"),
+            "ratingKey": f"{rating_key}-img-{i}",
+        })
+
+    return {
+        "MediaContainer": {
+            "offset": 0,
+            "totalSize": len(plex_images),
+            "identifier": identifier,
+            "size": len(plex_images),
+            "Image": plex_images
         }
     }
 
@@ -381,6 +455,9 @@ def handle_metadata_request(req: MetadataRequest) -> dict:
             lookup_method=film.lookup_method,
             # Only store discovered_imdb if it differs from the effective imdb_id
             discovered_imdb=film.discovered_imdb if film.discovered_imdb and film.discovered_imdb != film.imdb_id else None,
+            content_rating=film.content_rating,
+            vpro_rating=film.vpro_rating,
+            images=film.images if film.images else None,
         )
         cache.write(req.rating_key, entry)
         lookup_info = f" via {film.lookup_method}" if film.lookup_method else ""
@@ -534,6 +611,20 @@ def handle_manual_match_request(req: MatchRequest) -> dict:
         if film.year:
             metadata["year"] = film.year
 
+        # Include thumbnail for Fix Match UI when images are enabled
+        if VPRO_RETURN_IMAGES and film.images:
+            # Find first poster/portrait image, or fall back to any image
+            thumb_url = None
+            for img in film.images:
+                img_type = img.get("type", "")
+                if img_type == "PROMO_PORTRAIT":
+                    thumb_url = img.get("url")
+                    break
+            if not thumb_url and film.images:
+                thumb_url = film.images[0].get("url")
+            if thumb_url:
+                metadata["thumb"] = thumb_url
+
         # Include external GUIDs if available
         guids = []
         if film.imdb_id:
@@ -558,6 +649,9 @@ def handle_manual_match_request(req: MatchRequest) -> dict:
             fetched_at="",
             last_accessed="",
             lookup_method="manual_match",
+            content_rating=film.content_rating,
+            vpro_rating=film.vpro_rating,
+            images=film.images if film.images else None,
         )
         cache.write(rating_key, entry)
 
@@ -699,6 +793,8 @@ def test_search():
             "vpro_url": film.url,
             "genres": getattr(film, 'genres', []),
             "vpro_rating": getattr(film, 'vpro_rating', None),
+            "content_rating": getattr(film, 'content_rating', None),
+            "images": getattr(film, 'images', []),
             "description_length": len(film.description) if film.description else 0,
             "description": film.description
         }
@@ -739,6 +835,50 @@ def cache_clear():
     try:
         count = cache.clear(preserve_credentials=True)
         return jsonify({"cleared": count})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/cache/delete', methods=['POST'])
+def cache_delete():
+    """
+    Delete specific cache entries by key or pattern.
+
+    Usage:
+        POST /cache/delete?key=vpro-confess-fletch-2022-none-m
+        POST /cache/delete?pattern=fletch
+    """
+    key = request.args.get('key', '')
+    pattern = request.args.get('pattern', '')
+
+    if not key and not pattern:
+        return jsonify({
+            "error": "Missing 'key' or 'pattern' parameter",
+            "usage": {
+                "by_key": "POST /cache/delete?key=vpro-title-year-imdb-m",
+                "by_pattern": "POST /cache/delete?pattern=fletch"
+            }
+        }), 400
+
+    try:
+        deleted = []
+
+        if key:
+            # Delete specific key
+            if cache.delete(key):
+                deleted.append(key)
+        elif pattern:
+            # Delete all keys matching pattern (case-insensitive)
+            pattern_lower = pattern.lower()
+            for cache_key in cache.keys():
+                if pattern_lower in cache_key.lower():
+                    if cache.delete(cache_key):
+                        deleted.append(cache_key)
+
+        return jsonify({
+            "deleted": deleted,
+            "count": len(deleted)
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -846,16 +986,8 @@ def match_metadata():
 
 @app.route('/movies/library/metadata/<rating_key>/images', methods=['GET'])
 def get_images(rating_key: str):
-    """Return empty - VPRO doesn't provide artwork."""
-    return jsonify({
-        "MediaContainer": {
-            "offset": 0,
-            "totalSize": 0,
-            "identifier": PROVIDER_IDENTIFIER,
-            "size": 0,
-            "Image": []
-        }
-    })
+    """Return VPRO images if enabled, otherwise empty."""
+    return jsonify(_build_images_response(rating_key, PROVIDER_IDENTIFIER))
 
 
 @app.route('/movies/library/metadata/<rating_key>/extras', methods=['GET'])
@@ -920,16 +1052,8 @@ def match_metadata_tv():
 
 @app.route('/series/library/metadata/<rating_key>/images', methods=['GET'])
 def get_images_tv(rating_key: str):
-    """Return empty - VPRO doesn't provide artwork."""
-    return jsonify({
-        "MediaContainer": {
-            "offset": 0,
-            "totalSize": 0,
-            "identifier": PROVIDER_IDENTIFIER_TV,
-            "size": 0,
-            "Image": []
-        }
-    })
+    """Return VPRO images if enabled, otherwise empty."""
+    return jsonify(_build_images_response(rating_key, PROVIDER_IDENTIFIER_TV))
 
 
 @app.route('/series/library/metadata/<rating_key>/extras', methods=['GET'])
@@ -992,6 +1116,14 @@ def readiness_check():
     checks["tmdb"] = {
         "status": "ok" if tmdb_key else "disabled",
         "configured": bool(tmdb_key)
+    }
+
+    # Check 4: VPRO optional features
+    checks["vpro_features"] = {
+        "summary": VPRO_RETURN_SUMMARY,
+        "content_rating": VPRO_RETURN_CONTENT_RATING,
+        "images": VPRO_RETURN_IMAGES,
+        "rating": VPRO_RETURN_RATING,
     }
 
     status_code = 200 if healthy else 503
