@@ -46,6 +46,7 @@ from constants import (
     VPRO_RETURN_SUMMARY,
     VPRO_RETURN_CONTENT_RATING,
     VPRO_RETURN_IMAGES,
+    VPRO_RETURN_RATING,
 )
 from cache import FileCache, CacheEntry
 from credentials import get_credential_manager
@@ -276,9 +277,11 @@ def _build_metadata_response(
     if VPRO_RETURN_CONTENT_RATING and entry.content_rating:
         metadata["contentRating"] = f"nl/{entry.content_rating}"
 
-    # NOTE: Plex ignores rating/audienceRating from custom metadata providers.
-    # Only built-in agents (Plex Movie/Series) can set ratings.
-    # VPRO rating is still extracted and available via /test endpoint and cache.
+    # Include VPRO rating if enabled and available
+    # NOTE: Plex may store this value but displays icons based on library settings,
+    # not custom providers. See README for details on this Plex limitation.
+    if VPRO_RETURN_RATING and entry.vpro_rating:
+        metadata["audienceRating"] = float(entry.vpro_rating)
 
     # Build external GUIDs
     guids = []
@@ -1117,11 +1120,11 @@ def readiness_check():
     }
 
     # Check 4: VPRO optional features
-    # Note: rating not included - Plex ignores ratings from custom providers
     checks["vpro_features"] = {
         "summary": VPRO_RETURN_SUMMARY,
         "content_rating": VPRO_RETURN_CONTENT_RATING,
         "images": VPRO_RETURN_IMAGES,
+        "rating": VPRO_RETURN_RATING,  # Note: Plex may not display (see README)
     }
 
     status_code = 200 if healthy else 503
