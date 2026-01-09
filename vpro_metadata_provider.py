@@ -1116,6 +1116,12 @@ def readiness_check():
         "configured": bool(tmdb_key)
     }
 
+    # Check 4: VPRO optional features
+    checks["vpro_features"] = {
+        "images": VPRO_RETURN_IMAGES,
+        "rating": VPRO_RETURN_RATING,
+    }
+
     status_code = 200 if healthy else 503
 
     return jsonify({
