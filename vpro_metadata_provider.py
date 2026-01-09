@@ -610,6 +610,7 @@ def handle_manual_match_request(req: MatchRequest) -> dict:
             metadata["year"] = film.year
 
         # Include thumbnail for Fix Match UI when images are enabled
+        logger.debug(f"Film '{film.title}': VPRO_RETURN_IMAGES={VPRO_RETURN_IMAGES}, images={len(film.images) if film.images else 0}")
         if VPRO_RETURN_IMAGES and film.images:
             # Find first poster/portrait image, or fall back to any image
             thumb_url = None
