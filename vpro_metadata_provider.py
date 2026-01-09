@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-VPRO Cinema Plex Metadata Provider v3.1.2
+VPRO Cinema Plex Metadata Provider v3.2.0
 
 A custom Plex metadata provider that fetches Dutch film and TV series
 descriptions from VPRO Cinema.
@@ -56,6 +56,7 @@ from text_utils import (
 from logging_config import configure_logging, setup_flask_request_id, get_request_id
 from metrics import metrics
 from vpro_lookup import get_vpro_description
+from poms_client import search_poms_multiple
 
 # =============================================================================
 # Configuration
@@ -420,6 +421,7 @@ class MatchRequest:
     imdb_id: Optional[str]
     media_type: str
     provider_type: str  # "movie" or "tv"
+    manual: bool = False  # Fix Match mode - return multiple results
 
     @property
     def identifier(self) -> str:
@@ -478,6 +480,102 @@ def handle_match_request(req: MatchRequest) -> dict:
     }
 
 
+def handle_manual_match_request(req: MatchRequest) -> dict:
+    """
+    Handle Fix Match manual search - returns MULTIPLE results.
+
+    This does an IMMEDIATE search (unlike normal match which defers lookup).
+    Called when Plex sends manual=1 in the match request, typically when
+    user clicks "Fix Match" in the UI.
+
+    Args:
+        req: Match request parameters (with manual=True)
+
+    Returns:
+        Plex-compatible response with multiple metadata entries
+    """
+    logger.info(
+        f"Manual match (Fix Match): title='{req.title}', year={req.year}, "
+        f"type={req.media_type}"
+    )
+    metrics.inc("manual_match_requests", labels={"type": req.media_type})
+
+    if not req.title:
+        return _build_empty_response(req.identifier)
+
+    # Perform immediate search for Fix Match
+    films = search_poms_multiple(
+        title=req.title,
+        year=req.year,
+        media_type=req.media_type,
+        max_results=10,
+    )
+
+    if not films:
+        logger.info(f"Manual match: No results for '{req.title}'")
+        return _build_empty_response(req.identifier)
+
+    metadata_list = []
+    for film in films:
+        rating_key = generate_rating_key(
+            film.title, film.year, film.imdb_id, film.media_type
+        )
+        plex_type = MediaType(film.media_type).to_plex_type_str()
+
+        metadata = {
+            "ratingKey": rating_key,
+            "key": f"{req.base_path}/library/metadata/{rating_key}",
+            "guid": f"{req.identifier}://{plex_type}/{rating_key}",
+            "type": plex_type,
+            "title": film.title,
+            "summary": film.description,  # Include description in Fix Match results
+        }
+
+        if film.year:
+            metadata["year"] = film.year
+
+        # Include external GUIDs if available
+        guids = []
+        if film.imdb_id:
+            guids.append({"id": f"imdb://{film.imdb_id}"})
+        if film.vpro_id:
+            guids.append({"id": f"vpro://{film.vpro_id}"})
+        if guids:
+            metadata["Guid"] = guids
+
+        metadata_list.append(metadata)
+
+        # Pre-cache the result for faster metadata fetch when user selects it
+        entry = CacheEntry(
+            title=film.title,
+            year=film.year,
+            description=film.description,
+            url=film.url,
+            imdb_id=film.imdb_id,
+            vpro_id=film.vpro_id,
+            media_type=film.media_type,
+            status=CacheStatus.FOUND.value,
+            fetched_at="",
+            last_accessed="",
+            lookup_method="manual_match",
+        )
+        cache.write(rating_key, entry)
+
+    logger.info(
+        f"Manual match: Returning {len(metadata_list)} results for '{req.title}'"
+    )
+
+    return {
+        "MediaContainer": {
+            "offset": 0,
+            "totalSize": len(metadata_list),
+            "identifier": req.identifier,
+            "size": len(metadata_list),
+            "Metadata": metadata_list
+        }
+    }
+
+
 def parse_match_data(data: dict, provider_type: str) -> MatchRequest:
     """
     Parse match request data from Plex.
@@ -494,6 +592,7 @@ def parse_match_data(data: dict, provider_type: str) -> MatchRequest:
     metadata_type = data.get('type', 1 if provider_type == "movie" else 2)
     guid = data.get('guid', '')
     filename = data.get('filename', '')
+    manual = data.get('manual', 0) == 1  # Fix Match mode
 
     # Try Media array for filename
     media = data.get('Media', [])
@@ -504,7 +603,7 @@ def parse_match_data(data: dict, provider_type: str) -> MatchRequest:
             pass
 
     # Extract IMDB from guid first, then filename
-    logger.debug(f"parse_match_data: guid='{guid}', filename='{filename}'")
+    logger.debug(f"parse_match_data: guid='{guid}', filename='{filename}', manual={manual}")
     imdb_id = extract_imdb_from_text(guid)
     if imdb_id:
         logger.debug(f"Extracted IMDB {imdb_id} from guid")
@@ -528,6 +627,7 @@ def parse_match_data(data: dict, provider_type: str) -> MatchRequest:
         imdb_id=imdb_id,
         media_type=media_type.value,
         provider_type=provider_type,
+        manual=manual,
     )
 
 
@@ -714,6 +814,10 @@ def match_metadata():
 
     match_req = parse_match_data(data, "movie")
 
+    # Fix Match mode - return multiple results for user selection
+    if match_req.manual:
+        return jsonify(handle_manual_match_request(match_req))
+
     # Extract filename for logging
     filename = data.get('filename', '')
     if not filename:
@@ -783,6 +887,10 @@ def match_metadata_tv():
         return jsonify(_build_empty_response(PROVIDER_IDENTIFIER_TV))
 
     match_req = parse_match_data(data, "tv")
+
+    # Fix Match mode - return multiple results for user selection
+    if match_req.manual:
+        return jsonify(handle_manual_match_request(match_req))
 
     # Extract filename for logging
     filename = data.get('filename', '')
