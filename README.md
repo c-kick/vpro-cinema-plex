@@ -92,10 +92,10 @@ docker build -t vpro-plex-provider:latest .
 Add to your stack:
 
 ```yaml
-vpro-cinema:
-  image: vpro-cinema:latest
+vpro-plex-provider:
+  image: vpro-plex-provider:latest
   pull_policy: never
-  container_name: vpro-cinema
+  container_name: vpro-plex-provider
   restart: unless-stopped
   ports:
     - "5100:5100"
