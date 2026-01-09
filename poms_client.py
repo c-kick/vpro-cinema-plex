@@ -25,7 +25,7 @@ from constants import (
     YEAR_TOLERANCE,
 )
 from credentials import get_credential_manager, CredentialManager
-from http_client import RateLimitedSession, create_session
+from http_client import RateLimitedSession, create_session, SessionAwareComponent
 from metrics import metrics
 from models import VPROFilm
 from text_utils import (
@@ -33,6 +33,7 @@ from text_utils import (
     is_valid_description,
     titles_match,
     title_similarity,
+    build_unique_list,
 )
 
 logger = logging.getLogger(__name__)
@@ -45,7 +46,7 @@ TMDB_API_KEY = os.environ.get("TMDB_API_KEY", "")
 # TMDB API Client
 # =============================================================================
 
-class TMDBClient:
+class TMDBClient(SessionAwareComponent):
     """
     Client for TMDB API to fetch alternate titles.
 
@@ -61,13 +62,69 @@ class TMDBClient:
             session: Optional shared session for connection pooling.
         """
         self.api_key = api_key or TMDB_API_KEY
-        self.session = session or create_session(timeout=10)
-        self._owns_session = session is None
+        self.init_session(session, timeout=10)
 
-    def close(self) -> None:
-        """Close session if we own it."""
-        if self._owns_session:
-            self.session.close()
+    # Media type configuration for TMDB API endpoints
+    MEDIA_TYPE_CONFIG = {
+        "film": {
+            "endpoint": "movie",
+            "original_title_key": "original_title",
+            "alt_results_key": "titles",
+        },
+        "series": {
+            "endpoint": "tv",
+            "original_title_key": "original_name",
+            "alt_results_key": "results",
+        },
+    }
+
+    # Preferred countries for alternate titles (relevant for VPRO/Dutch searches)
+    PREFERRED_COUNTRIES = ["FR", "NL", "BE", "DE"]
+
+    def _build_prioritized_titles(
+        self,
+        tmdb_id: int,
+        media_type: str,
+    ) -> List[str]:
+        """
+        Build prioritized title list from TMDB with deduplication.
+
+        Priority order:
+        1. Original title
+        2. Titles from preferred countries (FR, NL, BE, DE)
+        3. All other alternate titles
+
+        Args:
+            tmdb_id: TMDB ID of the content
+            media_type: "film" or "series"
+
+        Returns:
+            List of unique titles in priority order
+        """
+        config = self.MEDIA_TYPE_CONFIG.get(media_type, self.MEDIA_TYPE_CONFIG["film"])
+        endpoint = config["endpoint"]
+
+        details = self._get(f"/{endpoint}/{tmdb_id}")
+        alt_data = self._get(f"/{endpoint}/{tmdb_id}/alternative_titles")
+
+        titles, add_title = build_unique_list(str.lower)
+
+        # Priority 1: Original title
+        if details:
+            add_title(details.get(config["original_title_key"]))
+
+        # Priority 2: Preferred country titles
+        alt_titles = alt_data.get(config["alt_results_key"], []) if alt_data else []
+        for country in self.PREFERRED_COUNTRIES:
+            for t in alt_titles:
+                if t.get("iso_3166_1") == country:
+                    add_title(t.get("title"))
+
+        # Priority 3: All remaining titles
+        for t in alt_titles:
+            add_title(t.get("title"))
+
+        return titles
 
     def _get(self, endpoint: str, params: dict = None) -> Optional[dict]:
         """Make authenticated GET request to TMDB API."""
@@ -188,48 +245,13 @@ class TMDBClient:
             return None, []
 
         # Get external IDs (IMDB)
-        if detected_type == "series":
-            ext_data = self._get(f"/tv/{tmdb_id}/external_ids")
-        else:
-            ext_data = self._get(f"/movie/{tmdb_id}/external_ids")
-
+        config = self.MEDIA_TYPE_CONFIG.get(detected_type, self.MEDIA_TYPE_CONFIG["film"])
+        ext_data = self._get(f"/{config['endpoint']}/{tmdb_id}/external_ids")
         if ext_data:
             imdb_id = ext_data.get("imdb_id")
 
-        # Get details for original title
-        if detected_type == "series":
-            details = self._get(f"/tv/{tmdb_id}")
-            alt_data = self._get(f"/tv/{tmdb_id}/alternative_titles")
-            original_title_key = "original_name"
-            alt_results_key = "results"
-        else:
-            details = self._get(f"/movie/{tmdb_id}")
-            alt_data = self._get(f"/movie/{tmdb_id}/alternative_titles")
-            original_title_key = "original_title"
-            alt_results_key = "titles"
-
-        seen = set()
-
-        def add_title(t: str):
-            if t and t.lower() not in seen:
-                seen.add(t.lower())
-                titles.append(t)
-
-        # Add original title first (most important for VPRO)
-        if details:
-            add_title(details.get(original_title_key))
-
-        # Add alternate titles, prioritizing FR/NL/BE/DE
-        alt_titles = alt_data.get(alt_results_key, []) if alt_data else []
-        preferred_countries = ["FR", "NL", "BE", "DE"]
-
-        for country in preferred_countries:
-            for t in alt_titles:
-                if t.get("iso_3166_1") == country:
-                    add_title(t.get("title"))
-
-        for t in alt_titles:
-            add_title(t.get("title"))
+        # Get prioritized titles using shared helper
+        titles = self._build_prioritized_titles(tmdb_id, detected_type)
 
         if titles:
             logger.info(f"TMDB search '{title}' ({year}): imdb={imdb_id}, titles={titles[:3]}...")
@@ -258,44 +280,8 @@ class TMDBClient:
             logger.debug(f"Could not find TMDB ID for {imdb_id}")
             return []
 
-        # Use correct endpoint based on detected type
-        if detected_type == "series":
-            details = self._get(f"/tv/{tmdb_id}")
-            alt_data = self._get(f"/tv/{tmdb_id}/alternative_titles")
-            original_title_key = "original_name"
-            alt_results_key = "results"
-        else:
-            details = self._get(f"/movie/{tmdb_id}")
-            alt_data = self._get(f"/movie/{tmdb_id}/alternative_titles")
-            original_title_key = "original_title"
-            alt_results_key = "titles"
-
-        titles = []
-        seen = set()
-
-        def add_title(t: str):
-            if t and t.lower() not in seen:
-                seen.add(t.lower())
-                titles.append(t)
-
-        # Priority 1: Original title
-        if details:
-            add_title(details.get(original_title_key))
-
-        # Priority 2: Preferred language titles
-        preferred_countries = ["FR", "NL", "BE", "DE"]
-        alt_titles = alt_data.get(alt_results_key, []) if alt_data else []
-
-        if alt_titles:
-            # First add preferred countries
-            for country in preferred_countries:
-                for t in alt_titles:
-                    if t.get("iso_3166_1") == country:
-                        add_title(t.get("title"))
-
-            # Then add rest
-            for t in alt_titles:
-                add_title(t.get("title"))
+        # Use shared helper for prioritized title building
+        titles = self._build_prioritized_titles(tmdb_id, detected_type)
 
         logger.info(
             f"TMDB alternate titles for {imdb_id} [{detected_type}]: "
@@ -308,7 +294,7 @@ class TMDBClient:
 # NPO POMS API Client
 # =============================================================================
 
-class POMSAPIClient:
+class POMSAPIClient(SessionAwareComponent):
     """
     NPO POMS REST API client for VPRO Cinema.
 
@@ -330,13 +316,7 @@ class POMSAPIClient:
             credential_manager: Optional credential manager instance.
         """
         self.creds = credential_manager or get_credential_manager()
-        self.session = session or create_session(timeout=30)
-        self._owns_session = session is None
-
-    def close(self) -> None:
-        """Close session if we own it."""
-        if self._owns_session:
-            self.session.close()
+        self.init_session(session, timeout=30)
 
     def _get_npo_date(self) -> str:
         """Get current timestamp in NPO API format."""

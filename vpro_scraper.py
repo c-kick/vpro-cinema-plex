@@ -13,10 +13,15 @@ from urllib.parse import quote_plus, parse_qs, urlparse, unquote
 from bs4 import BeautifulSoup
 
 from constants import YEAR_TOLERANCE
-from http_client import RateLimitedSession, create_session
+from http_client import RateLimitedSession, create_session, SessionAwareComponent
 from metrics import metrics
 from models import VPROFilm
-from text_utils import sanitize_description, is_valid_description, extract_year_from_text
+from text_utils import (
+    sanitize_description,
+    is_valid_description,
+    extract_year_from_text,
+    deduplicate_preserving_order,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +30,7 @@ logger = logging.getLogger(__name__)
 # Web Search
 # =============================================================================
 
-class WebSearcher:
+class WebSearcher(SessionAwareComponent):
     """
     Search VPRO Cinema via web search engines.
 
@@ -33,9 +38,23 @@ class WebSearcher:
     DuckDuckGo and Startpage.
     """
 
-    # URL patterns for matching VPRO Cinema URLs
-    FILM_URL_PATTERN = r'vprogids\.nl/cinema/films/film~'
-    SERIES_URL_PATTERN = r'vprogids\.nl/cinema/series/serie~'
+    # Media type configuration for VPRO Cinema
+    MEDIA_TYPE_CONFIG = {
+        "film": {
+            "search_path": "cinema/films",
+            "url_pattern": r'vprogids\.nl/cinema/films/film~',
+            "item_name": "film",
+        },
+        "series": {
+            "search_path": "cinema/series",
+            "url_pattern": r'vprogids\.nl/cinema/series/serie~',
+            "item_name": "serie",
+        },
+    }
+
+    # Legacy pattern references (for backward compatibility)
+    FILM_URL_PATTERN = MEDIA_TYPE_CONFIG["film"]["url_pattern"]
+    SERIES_URL_PATTERN = MEDIA_TYPE_CONFIG["series"]["url_pattern"]
 
     # CAPTCHA/bot detection indicators (specific elements, not just words)
     CAPTCHA_INDICATORS = [
@@ -60,13 +79,7 @@ class WebSearcher:
         Args:
             session: Optional shared session for connection pooling.
         """
-        self.session = session or create_session(timeout=15)
-        self._owns_session = session is None
-
-    def close(self) -> None:
-        """Close session if we own it."""
-        if self._owns_session:
-            self.session.close()
+        self.init_session(session, timeout=15)
 
     def _is_captcha_page(self, html: str) -> bool:
         """
@@ -104,24 +117,32 @@ class WebSearcher:
 
     def _get_search_paths(self, media_type: str) -> List[str]:
         """Get VPRO Cinema paths based on media type."""
-        if media_type == "film":
-            return ["cinema/films"]
-        elif media_type == "series":
-            return ["cinema/series"]
-        else:
-            return ["cinema/films", "cinema/series"]
+        if media_type in self.MEDIA_TYPE_CONFIG:
+            return [self.MEDIA_TYPE_CONFIG[media_type]["search_path"]]
+        # "all" - return paths for all types
+        return [cfg["search_path"] for cfg in self.MEDIA_TYPE_CONFIG.values()]
 
     def _matches_vpro_url(self, url: str, media_type: str) -> bool:
         """Check if URL matches VPRO Cinema pattern."""
-        if media_type == "film":
-            return bool(re.search(self.FILM_URL_PATTERN, url))
-        elif media_type == "series":
-            return bool(re.search(self.SERIES_URL_PATTERN, url))
-        else:
-            return bool(
-                re.search(self.FILM_URL_PATTERN, url) or
-                re.search(self.SERIES_URL_PATTERN, url)
-            )
+        if media_type in self.MEDIA_TYPE_CONFIG:
+            return bool(re.search(self.MEDIA_TYPE_CONFIG[media_type]["url_pattern"], url))
+        # "all" - check if URL matches any type pattern
+        return any(
+            re.search(cfg["url_pattern"], url)
+            for cfg in self.MEDIA_TYPE_CONFIG.values()
+        )
+
+    def _build_url_extraction_pattern(self, media_type: str) -> str:
+        """Build regex pattern for extracting VPRO URLs from HTML."""
+        base = r'https?://(?:www\.)?vprogids\.nl/'
+        suffix = r'[^"\'&\s<>]+'
+
+        if media_type in self.MEDIA_TYPE_CONFIG:
+            cfg = self.MEDIA_TYPE_CONFIG[media_type]
+            return f'{base}{cfg["search_path"]}/{cfg["item_name"]}~{suffix}'
+
+        # "all" - match both types
+        return f'{base}cinema/(?:films/film|series/serie)~{suffix}'
 
     def search_duckduckgo(
         self,
@@ -177,14 +198,7 @@ class WebSearcher:
             except Exception as e:
                 logger.warning(f"DuckDuckGo search failed: {e}")
 
-        # Dedupe while preserving order
-        seen = set()
-        unique_urls = []
-        for url in all_urls:
-            if url not in seen:
-                seen.add(url)
-                unique_urls.append(url)
-
+        unique_urls = deduplicate_preserving_order(all_urls)
         logger.info(f"DuckDuckGo: found {len(unique_urls)} URLs for '{title}'")
         return unique_urls[:5]
 
@@ -226,17 +240,8 @@ class WebSearcher:
                     logger.warning("Startpage showing CAPTCHA - skipping")
                     continue
 
-                # Extract URLs with regex
-                if media_type == "film":
-                    pattern = r'https?://(?:www\.)?vprogids\.nl/cinema/films/film~[^"\'&\s<>]+'
-                elif media_type == "series":
-                    pattern = r'https?://(?:www\.)?vprogids\.nl/cinema/series/serie~[^"\'&\s<>]+'
-                else:
-                    pattern = (
-                        r'https?://(?:www\.)?vprogids\.nl/cinema/'
-                        r'(?:films/film|series/serie)~[^"\'&\s<>]+'
-                    )
-
+                # Extract URLs with regex based on media type
+                pattern = self._build_url_extraction_pattern(media_type)
                 matches = re.findall(pattern, response.text)
 
                 for url in matches:
@@ -246,14 +251,7 @@ class WebSearcher:
             except Exception as e:
                 logger.warning(f"Startpage search failed: {e}")
 
-        # Dedupe while preserving order
-        seen = set()
-        unique_urls = []
-        for url in all_urls:
-            if url not in seen:
-                seen.add(url)
-                unique_urls.append(url)
-
+        unique_urls = deduplicate_preserving_order(all_urls)
         logger.info(f"Startpage: found {len(unique_urls)} URLs for '{title}'")
         return unique_urls[:5]
 
@@ -293,7 +291,7 @@ StartpageSearcher = WebSearcher
 # VPRO Page Scraper
 # =============================================================================
 
-class VPROPageScraper:
+class VPROPageScraper(SessionAwareComponent):
     """Scrapes film and series details from VPRO Cinema pages."""
 
     def __init__(self, session: RateLimitedSession = None):
@@ -303,13 +301,7 @@ class VPROPageScraper:
         Args:
             session: Optional shared session for connection pooling.
         """
-        self.session = session or create_session(timeout=15)
-        self._owns_session = session is None
-
-    def close(self) -> None:
-        """Close session if we own it."""
-        if self._owns_session:
-            self.session.close()
+        self.init_session(session, timeout=15)
 
     def scrape(self, url: str) -> Optional[VPROFilm]:
         """
