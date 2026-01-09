@@ -152,6 +152,8 @@ VPRO_RETURN_CONTENT_RATING: bool = _get_bool_env("VPRO_RETURN_CONTENT_RATING", T
 # WARNING: May override images from secondary agents like Plex Movie
 VPRO_RETURN_IMAGES: bool = _get_bool_env("VPRO_RETURN_IMAGES", False)
 
-# Return VPRO appreciation rating (1-10) as Plex rating field (default: false)
-# WARNING: May override ratings from secondary agents like Plex Movie
+# Return VPRO appreciation rating (1-10) as audienceRating field (default: false)
+# NOTE: Plex may store this value but displays icons based on library "Ratings Source"
+# setting, not the provider. Custom ratingImage schemes are not supported.
+# See: https://forums.plex.tv/c/dev-api-corner/ for updates on this limitation.
 VPRO_RETURN_RATING: bool = _get_bool_env("VPRO_RETURN_RATING", False)
