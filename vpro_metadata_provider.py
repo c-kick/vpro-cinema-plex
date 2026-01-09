@@ -837,6 +837,50 @@ def cache_clear():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/cache/delete', methods=['POST'])
+def cache_delete():
+    """
+    Delete specific cache entries by key or pattern.
+
+    Usage:
+        POST /cache/delete?key=vpro-confess-fletch-2022-none-m
+        POST /cache/delete?pattern=fletch
+    """
+    key = request.args.get('key', '')
+    pattern = request.args.get('pattern', '')
+
+    if not key and not pattern:
+        return jsonify({
+            "error": "Missing 'key' or 'pattern' parameter",
+            "usage": {
+                "by_key": "POST /cache/delete?key=vpro-title-year-imdb-m",
+                "by_pattern": "POST /cache/delete?pattern=fletch"
+            }
+        }), 400
+
+    try:
+        deleted = []
+
+        if key:
+            # Delete specific key
+            if cache.delete(key):
+                deleted.append(key)
+        elif pattern:
+            # Delete all keys matching pattern (case-insensitive)
+            pattern_lower = pattern.lower()
+            for cache_key in cache.keys():
+                if pattern_lower in cache_key.lower():
+                    if cache.delete(cache_key):
+                        deleted.append(cache_key)
+
+        return jsonify({
+            "deleted": deleted,
+            "count": len(deleted)
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 # =============================================================================
 # Provider Root Endpoints
 # =============================================================================
