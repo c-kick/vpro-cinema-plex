@@ -515,6 +515,17 @@ class POMSAPIClient:
 
         result = item.get("result", {})
 
+        # DEBUG: Log full structure to discover available fields
+        logger.info(f"DEBUG: item top-level keys = {list(item.keys())}")
+        logger.info(f"DEBUG: result top-level keys = {list(result.keys())}")
+        relation_types = [r.get("type") for r in result.get("relations", [])]
+        logger.info(f"DEBUG: relation types = {relation_types}")
+        # Check for any field containing 'age', 'rating', 'kijk' (case insensitive)
+        for key, value in result.items():
+            key_lower = key.lower()
+            if any(x in key_lower for x in ['age', 'rating', 'kijk', 'leeftijd']):
+                logger.info(f"DEBUG: potential rating field '{key}' = {value}")
+
         item_type = result.get("type")
         if item_type == "MOVIE":
             media_type = "film"
