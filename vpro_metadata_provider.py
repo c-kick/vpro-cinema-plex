@@ -43,6 +43,8 @@ from constants import (
     PROVIDER_TITLE,
     PROVIDER_TITLE_TV,
     PROVIDER_VERSION,
+    VPRO_RETURN_SUMMARY,
+    VPRO_RETURN_CONTENT_RATING,
     VPRO_RETURN_IMAGES,
     VPRO_RETURN_RATING,
 )
@@ -267,12 +269,12 @@ def _build_metadata_response(
         "type": plex_type,
     }
 
-    # Only include summary if we have a description
-    if entry.description:
+    # Only include summary if enabled and we have a description
+    if VPRO_RETURN_SUMMARY and entry.description:
         metadata["summary"] = entry.description
 
-    # Include Kijkwijzer content rating if available
-    if entry.content_rating:
+    # Include Kijkwijzer content rating if enabled and available
+    if VPRO_RETURN_CONTENT_RATING and entry.content_rating:
         metadata["contentRating"] = f"nl/{entry.content_rating}"
 
     # Include VPRO rating if enabled and available
@@ -1118,6 +1120,8 @@ def readiness_check():
 
     # Check 4: VPRO optional features
     checks["vpro_features"] = {
+        "summary": VPRO_RETURN_SUMMARY,
+        "content_rating": VPRO_RETURN_CONTENT_RATING,
         "images": VPRO_RETURN_IMAGES,
         "rating": VPRO_RETURN_RATING,
     }

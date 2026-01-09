@@ -255,15 +255,17 @@ docker-compose logs -f
 
 ## Environment Variables
 
-| Variable             | Default            | Description                                          |
-|----------------------|--------------------|------------------------------------------------------|
-| `PORT`               | 5100               | Server port                                          |
-| `LOG_LEVEL`          | INFO               | DEBUG, INFO, WARNING, ERROR                          |
-| `CACHE_DIR`          | ./cache            | Cache directory path                                 |
-| `TMDB_API_KEY`       | *(none)*           | TMDB API key for alternate title lookup              |
-| `POMS_CACHE_FILE`    | ./credentials.json | Path to cached POMS credentials                      |
-| `VPRO_RETURN_IMAGES` | false              | Return VPRO images (may override secondary agent)    |
-| `VPRO_RETURN_RATING` | false              | Return VPRO rating (1-10, may override secondary agent) |
+| Variable                    | Default            | Description                                                 |
+|-----------------------------|--------------------|-------------------------------------------------------------|
+| `PORT`                      | 5100               | Server port                                                 |
+| `LOG_LEVEL`                 | INFO               | DEBUG, INFO, WARNING, ERROR                                 |
+| `CACHE_DIR`                 | ./cache            | Cache directory path                                        |
+| `TMDB_API_KEY`              | *(none)*           | TMDB API key for alternate title lookup                     |
+| `POMS_CACHE_FILE`           | ./credentials.json | Path to cached POMS credentials                             |
+| `VPRO_RETURN_SUMMARY`       | true               | Return VPRO Dutch summary/description                       |
+| `VPRO_RETURN_CONTENT_RATING`| true               | Return Kijkwijzer content rating (AL, 6, 9, 12, 14, 16, 18) |
+| `VPRO_RETURN_IMAGES`        | false              | Return VPRO images (may override secondary agent)           |
+| `VPRO_RETURN_RATING`        | false              | Return VPRO appreciation rating (1-10, may override secondary agent) |
 
 ## API Reference
 
@@ -282,7 +284,8 @@ docker-compose logs -f
 | `/health`                               | GET    | Health check with version and config status    |
 | `/test`                                 | GET    | Test search: `?title=X&year=Y&imdb=ttZ&type=T` |
 | `/cache`                                | GET    | List cached entries or view specific: `?key=X` |
-| `/cache/clear`                          | POST   | Clear cached entries (preserves credentials)   |
+| `/cache/clear`                          | POST   | Clear all cached entries (preserves credentials) |
+| `/cache/delete`                         | POST   | Delete specific entries: `?key=X` or `?pattern=X` |
 
 ## File Structure
 
@@ -362,6 +365,31 @@ Single provider → two providers (`/movies` and `/series`). Required by Plex AP
 **Migration:** Remove old provider, add both new URLs, create separate TV Show agent.
 
 </details>
+
+## Changelog
+
+### v3.3.0
+- **Kijkwijzer content ratings** — Dutch age classification (AL, 6, 9, 12, 14, 16, 18) now extracted from POMS API
+- **Configurable metadata fields** — New environment variables to control what metadata is returned:
+  - `VPRO_RETURN_SUMMARY` (default: true) — Dutch descriptions
+  - `VPRO_RETURN_CONTENT_RATING` (default: true) — Kijkwijzer ratings
+  - `VPRO_RETURN_IMAGES` (default: false) — VPRO poster images
+  - `VPRO_RETURN_RATING` (default: false) — VPRO appreciation ratings (1-10)
+- **Fix Match thumbnails** — Images now display in Plex's Fix Match dialog when `VPRO_RETURN_IMAGES=true`
+- **Health endpoint improvements** — `/health/ready` now shows configured feature flags
+- **Selective cache deletion** — New `/cache/delete` endpoint for targeted cache management
+
+### v3.2.0
+- Added debug logging for troubleshooting
+- Docker environment variable passthrough improvements
+
+### v3.1.0
+- Breaking URL changes: `/` → `/movies`, `/tv` → `/series`
+- Provider name suffix changes (`- Movies` / `- Series`)
+
+### v3.0.0
+- Two-provider architecture for proper Plex secondary agent combining
+- Added series/TV show support
 
 ## Limitations
 

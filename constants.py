@@ -73,7 +73,7 @@ PROVIDER_IDENTIFIER: Final = "tv.plex.agents.custom.vpro.cinema"
 PROVIDER_IDENTIFIER_TV: Final = "tv.plex.agents.custom.vpro.cinema.tv"
 PROVIDER_TITLE: Final = "VPRO Cinema (Dutch Summaries) - Movies"
 PROVIDER_TITLE_TV: Final = "VPRO Cinema (Dutch Summaries) - Series"
-PROVIDER_VERSION: Final = "3.2.0"
+PROVIDER_VERSION: Final = "3.3.0"
 
 
 # =============================================================================
@@ -137,13 +137,21 @@ DEFAULT_POMS_API_SECRET: Final = "aag9veesei"
 # Feature Flags (configurable via environment)
 # =============================================================================
 # These control which metadata fields are returned to Plex.
-# By default, only description and contentRating are returned, allowing
+# By default, summary and contentRating are returned, allowing
 # secondary agents (Plex Movie/Series) to provide artwork and ratings.
 
-# Return VPRO images (posters) to Plex
+# Return VPRO Dutch summary/description to Plex (default: true)
+# This is the primary feature of this provider
+VPRO_RETURN_SUMMARY: bool = _get_bool_env("VPRO_RETURN_SUMMARY", True)
+
+# Return Kijkwijzer content rating (AL, 6, 9, 12, 14, 16, 18) to Plex (default: true)
+# Dutch age classification system similar to MPAA ratings
+VPRO_RETURN_CONTENT_RATING: bool = _get_bool_env("VPRO_RETURN_CONTENT_RATING", True)
+
+# Return VPRO images (posters) to Plex (default: false)
 # WARNING: May override images from secondary agents like Plex Movie
 VPRO_RETURN_IMAGES: bool = _get_bool_env("VPRO_RETURN_IMAGES", False)
 
-# Return VPRO appreciation rating (1-10) as Plex rating field
+# Return VPRO appreciation rating (1-10) as Plex rating field (default: false)
 # WARNING: May override ratings from secondary agents like Plex Movie
 VPRO_RETURN_RATING: bool = _get_bool_env("VPRO_RETURN_RATING", False)
