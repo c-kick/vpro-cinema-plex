@@ -14,12 +14,14 @@ from [VPRO Cinema](https://www.vprogids.nl/cinema/) to Plex Media Server.
 
 - 🇳🇱 Dutch film and series reviews/descriptions from VPRO Cinema's database
 - 📺 Supports both movies and series
+- 🔞 Kijkwijzer content ratings (Dutch age classification: AL, 6, 9, 12, 14, 16, 18)
 - 🔍 Direct NPO POMS API access with automatic credential refresh
 - 🌍 Smart title matching via TMDB — works in both directions (Translated → Original and Original → Translated)
 - 💾 Persistent caching (with TTL for not-found entries)
 - 🔧 Self-healing: auto-refreshes API credentials if authentication fails
 - 🐳 Docker-ready with health checks
-- 🔗 Combines with other providers (as it only returns the `description` metadata)
+- 🔗 Combines with other providers (returns description + content rating by default)
+- ⚙️ Configurable: optionally return VPRO images and/or ratings
 
 ## Background
 
@@ -253,13 +255,15 @@ docker-compose logs -f
 
 ## Environment Variables
 
-| Variable          | Default            | Description                             |
-|-------------------|--------------------|-----------------------------------------|
-| `PORT`            | 5100               | Server port                             |
-| `LOG_LEVEL`       | INFO               | DEBUG, INFO, WARNING, ERROR             |
-| `CACHE_DIR`       | ./cache            | Cache directory path                    |
-| `TMDB_API_KEY`    | *(none)*           | TMDB API key for alternate title lookup |
-| `POMS_CACHE_FILE` | ./credentials.json | Path to cached POMS credentials         |
+| Variable             | Default            | Description                                          |
+|----------------------|--------------------|------------------------------------------------------|
+| `PORT`               | 5100               | Server port                                          |
+| `LOG_LEVEL`          | INFO               | DEBUG, INFO, WARNING, ERROR                          |
+| `CACHE_DIR`          | ./cache            | Cache directory path                                 |
+| `TMDB_API_KEY`       | *(none)*           | TMDB API key for alternate title lookup              |
+| `POMS_CACHE_FILE`    | ./credentials.json | Path to cached POMS credentials                      |
+| `VPRO_RETURN_IMAGES` | false              | Return VPRO images (may override secondary agent)    |
+| `VPRO_RETURN_RATING` | false              | Return VPRO rating (1-10, may override secondary agent) |
 
 ## API Reference
 
@@ -363,7 +367,7 @@ Single provider → two providers (`/movies` and `/series`). Required by Plex AP
 
 - **POMS API is undocumented** — Not officially supported by NPO; may change without notice
 - **Not all content covered** — Only films/series reviewed by VPRO Cinema
-- **No artwork** — Use agent setup with Plex Movie/Series fallback
+- **Artwork optional** — Disabled by default; enable `VPRO_RETURN_IMAGES` or use Plex Movie fallback
 - **Web search fallback** — May hit rate limits or CAPTCHAs
 
 ## License

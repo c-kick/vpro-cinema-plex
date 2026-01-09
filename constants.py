@@ -5,8 +5,19 @@ This module centralizes all magic strings/numbers and provides type-safe
 enums for media types and cache status.
 """
 
+import os
 from enum import Enum
 from typing import Final
+
+
+def _get_bool_env(key: str, default: bool = False) -> bool:
+    """Get boolean from environment variable."""
+    value = os.environ.get(key, "").lower()
+    if value in ("true", "1", "yes", "on"):
+        return True
+    if value in ("false", "0", "no", "off"):
+        return False
+    return default
 
 # =============================================================================
 # Enums
@@ -120,3 +131,19 @@ TMDB_API_BASE: Final = "https://api.themoviedb.org/3"
 
 DEFAULT_POMS_API_KEY: Final = "ione7ahfij"
 DEFAULT_POMS_API_SECRET: Final = "aag9veesei"
+
+
+# =============================================================================
+# Feature Flags (configurable via environment)
+# =============================================================================
+# These control which metadata fields are returned to Plex.
+# By default, only description and contentRating are returned, allowing
+# secondary agents (Plex Movie/Series) to provide artwork and ratings.
+
+# Return VPRO images (posters) to Plex
+# WARNING: May override images from secondary agents like Plex Movie
+VPRO_RETURN_IMAGES: bool = _get_bool_env("VPRO_RETURN_IMAGES", False)
+
+# Return VPRO appreciation rating (1-10) as Plex rating field
+# WARNING: May override ratings from secondary agents like Plex Movie
+VPRO_RETURN_RATING: bool = _get_bool_env("VPRO_RETURN_RATING", False)

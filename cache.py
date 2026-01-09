@@ -61,6 +61,8 @@ class CacheEntry:
     discovered_imdb: Optional[str] = None  # IMDB found via TMDB lookup
     # Content metadata
     content_rating: Optional[str] = None  # Kijkwijzer age rating (AL, 6, 9, 12, 14, 16, 18)
+    vpro_rating: Optional[int] = None  # VPRO appreciation rating (1-10)
+    images: Optional[List[Dict[str, str]]] = None  # [{type, url, title}]
 
     def is_expired(self) -> bool:
         """
@@ -113,6 +115,8 @@ class CacheEntry:
             lookup_method=data.get("lookup_method"),
             discovered_imdb=data.get("discovered_imdb"),
             content_rating=data.get("content_rating"),
+            vpro_rating=data.get("vpro_rating"),
+            images=data.get("images"),
         )
 
 

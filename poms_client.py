@@ -554,6 +554,18 @@ class POMSAPIClient:
             if g.get("displayName")
         ]
 
+        # Extract images (posters, etc.)
+        images = []
+        for img in result.get("images", []):
+            img_url = img.get("url")
+            img_type = img.get("type", "PICTURE")
+            if img_url:
+                images.append({
+                    "type": img_type,
+                    "url": img_url,
+                    "title": img.get("title", ""),
+                })
+
         description = None
         url = result.get("url", "")
 
@@ -600,6 +612,7 @@ class POMSAPIClient:
             genres=genres,
             vpro_rating=vpro_rating,
             content_rating=content_rating,
+            images=images,
             media_type=media_type,
         )
 
