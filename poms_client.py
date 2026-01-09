@@ -545,8 +545,8 @@ class POMSAPIClient:
                 except ValueError:
                     pass
             elif rel_type == "CINEMA_AGERATING" and value and not content_rating:
-                # Kijkwijzer age rating (e.g., "16", "12", "AL")
-                content_rating = str(value)
+                # Kijkwijzer age rating (e.g., "_16" -> "16", "AL")
+                content_rating = str(value).lstrip('_')
 
         genres = [
             g.get("displayName", "")
