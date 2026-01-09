@@ -10,6 +10,8 @@ services:
       - TMDB_API_KEY=${TMDB_API_KEY:-}
       - CACHE_DIR=/app/cache
       - POMS_CACHE_FILE=/app/cache/credentials.json
+      - VPRO_RETURN_IMAGES=${VPRO_RETURN_IMAGES:-false}
+      - VPRO_RETURN_RATING=${VPRO_RETURN_RATING:-false}
     volumes:
       - ./cache:/app/cache
     restart: unless-stopped
