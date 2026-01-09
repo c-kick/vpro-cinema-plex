@@ -526,6 +526,7 @@ class POMSAPIClient:
         year = None
         directors = []
         vpro_rating = None
+        content_rating = None
 
         for rel in result.get("relations", []):
             rel_type = rel.get("type", "")
@@ -543,12 +544,27 @@ class POMSAPIClient:
                     vpro_rating = int(value)
                 except ValueError:
                     pass
+            elif rel_type == "CINEMA_AGERATING" and value and not content_rating:
+                # Kijkwijzer age rating (e.g., "_16" -> "16", "AL")
+                content_rating = str(value).lstrip('_')
 
         genres = [
             g.get("displayName", "")
             for g in result.get("genres", [])
             if g.get("displayName")
         ]
+
+        # Extract images (posters, etc.)
+        images = []
+        for img in result.get("images", []):
+            img_url = img.get("url")
+            img_type = img.get("type", "PICTURE")
+            if img_url:
+                images.append({
+                    "type": img_type,
+                    "url": img_url,
+                    "title": img.get("title", ""),
+                })
 
         description = None
         url = result.get("url", "")
@@ -595,6 +611,8 @@ class POMSAPIClient:
             vpro_id=vpro_id,
             genres=genres,
             vpro_rating=vpro_rating,
+            content_rating=content_rating,
+            images=images,
             media_type=media_type,
         )
 
