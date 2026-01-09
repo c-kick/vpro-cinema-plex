@@ -62,7 +62,7 @@ PROVIDER_IDENTIFIER: Final = "tv.plex.agents.custom.vpro.cinema"
 PROVIDER_IDENTIFIER_TV: Final = "tv.plex.agents.custom.vpro.cinema.tv"
 PROVIDER_TITLE: Final = "VPRO Cinema (Dutch Summaries) - Movies"
 PROVIDER_TITLE_TV: Final = "VPRO Cinema (Dutch Summaries) - Series"
-PROVIDER_VERSION: Final = "3.1.3"
+PROVIDER_VERSION: Final = "3.2.0"
 
 
 # =============================================================================

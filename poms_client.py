@@ -713,9 +713,79 @@ def search_poms_api(
     return None
 
 
+def search_poms_multiple(
+    title: str,
+    year: Optional[int] = None,
+    media_type: str = "all",
+    max_results: int = 10,
+    session: RateLimitedSession = None,
+) -> List[VPROFilm]:
+    """
+    Search VPRO and return MULTIPLE results for Fix Match.
+
+    Unlike search_poms_api() which returns only the best match,
+    this returns all valid matches with descriptions for user selection.
+
+    Note: Year parameter is accepted but NOT used for filtering.
+    Fix Match should show ALL matches regardless of year, letting
+    the user choose the correct one (e.g., original vs director's cut).
+
+    Args:
+        title: Title to search for
+        year: Ignored - kept for API compatibility
+        media_type: "film", "series", or "all"
+        max_results: Maximum number of results to return (default 10)
+        session: Optional shared session
+
+    Returns:
+        List of VPROFilm objects with valid descriptions
+    """
+    poms = POMSAPIClient(session=session)
+
+    try:
+        items = poms.search(title, max_results=max_results, media_type=media_type)
+
+        if not items:
+            logger.debug(f"POMS multiple: No results for '{title}'")
+            return []
+
+        logger.debug(f"POMS multiple: {len(items)} results for '{title}'")
+
+        films = []
+        seen_vpro_ids = set()
+
+        for item in items:
+            film = poms.parse_item(item)
+            if not film or not film.description:
+                continue
+
+            # Skip if media type doesn't match (when filtering)
+            if media_type != "all" and film.media_type != media_type:
+                continue
+
+            # No year filtering for Fix Match - show ALL matches
+            # User manually selects the correct version (original, redux, etc.)
+
+            # Deduplicate by VPRO ID
+            if film.vpro_id:
+                if film.vpro_id in seen_vpro_ids:
+                    continue
+                seen_vpro_ids.add(film.vpro_id)
+
+            films.append(film)
+
+        logger.info(f"POMS multiple: Returning {len(films)} matches for '{title}'")
+        return films[:max_results]
+
+    except Exception as e:
+        logger.error(f"POMS multiple search error: {e}")
+        return []
+
+
 __all__ = [
     'TMDBClient',
     'POMSAPIClient',
     'search_poms_api',
+    'search_poms_multiple',
     'TMDB_API_KEY',
 ]
