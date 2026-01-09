@@ -13,6 +13,7 @@ services:
       - VPRO_RETURN_SUMMARY=${VPRO_RETURN_SUMMARY:-true}
       - VPRO_RETURN_CONTENT_RATING=${VPRO_RETURN_CONTENT_RATING:-true}
       - VPRO_RETURN_IMAGES=${VPRO_RETURN_IMAGES:-false}
+      - VPRO_RETURN_RATING=${VPRO_RETURN_RATING:-false}
     volumes:
       - ./cache:/app/cache
     restart: unless-stopped
