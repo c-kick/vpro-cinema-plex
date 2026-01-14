@@ -179,35 +179,9 @@ New content will automatically use the provider on scan.
 
 ## How It Works
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  Plex requests metadata for "Downfall" (2004)                   │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  1. POMS API Search (primary)                                   │
-│     └─ NPO's film database with HMAC-SHA256 authentication      │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                      No match found?
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  2. TMDB Alternate Titles (requires TMDB_API_KEY)               │
-│     └─ With IMDB ID: fetch alternate titles directly            │
-│     └─ Without IMDB ID: search TMDB by title+year first         │
-│     └─ "Downfall" → "Der Untergang" → Found!                    │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                      Still no match?
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  3. Web Search Fallback                                         │
-│     └─ DuckDuckGo → Startpage → Scrape VPRO page                │
-└─────────────────────────────────────────────────────────────────┘
-```
+When configured as a Metadata Provider alongside Plex Movie (see [Plex Configuration](#plex-configuration)), the VPRO agent runs a lookup cascade while Plex Movie fetches its metadata in parallel. Results are merged with VPRO as primary — meaning Dutch summaries and Kijkwijzer ratings take precedence. Everything VPRO doesn't return (posters, cast, genres, etc.) is filled in by Plex Movie automatically.
+
+<img width="1093" height="912" alt="vpro-how-it-works drawio (3)" src="https://github.com/user-attachments/assets/40d72bc8-790f-4447-819e-2f1e9057471c" />
 
 ## Testing & Debugging
 
