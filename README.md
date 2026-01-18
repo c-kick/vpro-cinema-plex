@@ -1,6 +1,3 @@
-> **Note:** on jauary 20th 2026, the VPRO Cinema website will be renewed, and relocated to a new domain. Whether the API stays functional as it currently is, remains to be seen.
-I will evaluate this when the site goes live and update the agent. Until then, the agent remains fully functional. 
-
 # VPRO Cinema Metadata Provider for Plex
 
 A custom metadata provider that supplies Dutch film and series descriptions
