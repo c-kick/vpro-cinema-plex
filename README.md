@@ -183,7 +183,7 @@ New content will automatically use the provider on scan.
 
 When configured as a Metadata Provider alongside Plex Movie (see [Plex Configuration](#plex-configuration)), the VPRO agent runs a lookup cascade while Plex Movie fetches its metadata in parallel. Results are merged with VPRO as primary — meaning Dutch summaries and Kijkwijzer ratings take precedence. Everything VPRO doesn't return (posters, cast, genres, etc.) is filled in by Plex Movie automatically.
 
-<img width="1082" height="912" alt="vpro-how-it-works drawio (2) drawio" src="https://github.com/user-attachments/assets/207841c2-eca7-4d86-97e8-1b0a71895e3c" />
+<img width="1063" height="1072" alt="vpro-how-it-works drawio (2) drawio (2)" src="https://github.com/user-attachments/assets/e7b526e9-b467-46eb-ac38-eaf1fb1ba544" />
 
 ## Testing & Debugging
 
