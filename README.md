@@ -198,6 +198,9 @@ docker exec vpro-plex-provider python vpro_lookup.py "Adolescence" --year 2025 -
 
 # With IMDB ID + verbose output
 docker exec vpro-plex-provider python vpro_lookup.py "Downfall" --year 2004 --imdb tt0363163 -v
+
+# Test cinema.nl fallback directly (bypass POMS API)
+docker exec vpro-plex-provider python vpro_lookup.py "Der Untergang" --year 2004 --skip-poms -v
 ```
 
 ### HTTP endpoints (with caching)
@@ -205,6 +208,9 @@ docker exec vpro-plex-provider python vpro_lookup.py "Downfall" --year 2004 --im
 ```bash
 # Test search
 curl "http://localhost:5100/test?title=Le+dernier+métro&year=1980&type=film"
+
+# Test cinema.nl fallback directly (bypass POMS API)
+curl "http://localhost:5100/test?title=Der+Untergang&year=2004&skip_poms=1"
 
 # Plex metadata endpoint
 curl "http://localhost:5100/library/metadata/vpro-apocalypse-now-1979-tt0078788-m"
@@ -265,7 +271,7 @@ docker-compose logs -f
 | `/health`                               | GET    | Simple health check (version only)             |
 | `/health/ready`                         | GET    | Detailed health with checks, cache stats, config |
 | `/health/live`                          | GET    | Liveness probe (always returns ok)             |
-| `/test`                                 | GET    | Test search: `?title=X&year=Y&imdb=ttZ&type=T` |
+| `/test`                                 | GET    | Test search: `?title=X&year=Y&imdb=ttZ&type=T&skip_poms=1&skip_tmdb=1` |
 | `/cache`                                | GET    | List cached entries or view specific: `?key=X` |
 | `/cache/clear`                          | POST   | Clear all cached entries (preserves credentials) |
 | `/cache/delete`                         | POST   | Delete specific entries: `?key=X` or `?pattern=X` |
@@ -355,6 +361,7 @@ Single provider → two providers (`/movies` and `/series`). Required by Plex AP
 ### v3.4.0
 - **Cinema.nl direct scraper** — Replaced DuckDuckGo/Startpage web search with direct cinema.nl scraping
 - **IMDB verification** — Cinema.nl fallback now verifies matches using IMDB IDs for reliable matching
+- **Image extraction** — Cinema.nl fallback extracts high-resolution images from the Afbeeldingen section
 - **Migration complete** — vprogids.nl/cinema has fully migrated to cinema.nl
 - **Search optimizations** — Year-in-query and model=cinema parameter for better search ranking
 - **Circuit breaker** — Prevents hammering cinema.nl after repeated failures
