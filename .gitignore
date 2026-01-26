@@ -24,3 +24,6 @@ env/
 
 # Cache
 cache/
+
+# Drawings
+*.drawio.xml
