@@ -695,11 +695,15 @@ def test_search():
         /test?title=Apocalypse+Now&year=1979
         /test?title=The+Last+Metro&year=1980&imdb=tt0080610
         /test?title=Adolescence&year=2025&type=series
+        /test?title=Downfall&year=2004&skip_poms=1  # Test cinema.nl fallback
+        /test?title=Test&skip_poms=1&skip_tmdb=1    # Test cinema.nl only
     """
     title = request.args.get('title', '')
     year = request.args.get('year', type=int)
     imdb_id = request.args.get('imdb', '')
     media_type = request.args.get('type', 'all')
+    skip_poms = request.args.get('skip_poms', '').lower() in ('1', 'true', 'yes')
+    skip_tmdb = request.args.get('skip_tmdb', '').lower() in ('1', 'true', 'yes')
 
     if media_type not in ('film', 'series', 'all'):
         media_type = 'all'
@@ -707,15 +711,24 @@ def test_search():
     if not title:
         return jsonify({
             "error": "Missing 'title' parameter",
-            "usage": "/test?title=Name&year=1979&imdb=tt1234567&type=film|series|all",
+            "usage": "/test?title=Name&year=1979&imdb=tt1234567&type=film|series|all&skip_poms=1&skip_tmdb=1",
             "examples": [
                 "/test?title=Apocalypse+Now&year=1979",
                 "/test?title=The+Last+Metro&year=1980&imdb=tt0080610",
-                "/test?title=Adolescence&year=2025&type=series"
+                "/test?title=Adolescence&year=2025&type=series",
+                "/test?title=Der+Untergang&year=2004&skip_poms=1  (test cinema.nl fallback)",
+                "/test?title=Adolescence&year=2025&skip_poms=1&skip_tmdb=1  (test cinema.nl only)"
             ]
         }), 400
 
-    logger.info(f"Test search: title='{title}', year={year}, imdb={imdb_id}, type={media_type}")
+    skip_info = []
+    if skip_poms:
+        skip_info.append("POMS")
+    if skip_tmdb:
+        skip_info.append("TMDB")
+    skip_str = f" [SKIP: {', '.join(skip_info)}]" if skip_info else ""
+
+    logger.info(f"Test search: title='{title}', year={year}, imdb={imdb_id}, type={media_type}{skip_str}")
 
     try:
         film = get_vpro_description(
@@ -723,6 +736,8 @@ def test_search():
             year=year,
             imdb_id=imdb_id or None,
             media_type=media_type,
+            skip_poms=skip_poms,
+            skip_tmdb=skip_tmdb,
         )
     except Exception as e:
         logger.error(f"Test search error: {e}")
@@ -738,11 +753,19 @@ def test_search():
 
     return jsonify({
         "found": True,
-        "query": {"title": title, "year": year, "imdb": imdb_id, "type": media_type},
+        "query": {
+            "title": title,
+            "year": year,
+            "imdb": imdb_id,
+            "type": media_type,
+            "skip_poms": skip_poms,
+            "skip_tmdb": skip_tmdb,
+        },
         "result": {
             "title": film.title,
             "year": film.year,
             "media_type": film.media_type,
+            "lookup_method": getattr(film, 'lookup_method', None),
             "director": getattr(film, 'director', None),
             "imdb_id": film.imdb_id,
             "vpro_id": film.vpro_id,

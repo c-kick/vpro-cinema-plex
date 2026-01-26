@@ -1,7 +1,7 @@
 # VPRO Cinema Metadata Provider for Plex
 
 A custom metadata provider that supplies Dutch film and series descriptions
-from [VPRO Cinema](https://www.vprogids.nl/cinema/) to Plex Media Server.
+from [VPRO Cinema](https://www.cinema.nl/) to Plex Media Server.
 
 See [how it works](#how-it-works).
 
@@ -17,10 +17,10 @@ See [how it works](#how-it-works).
 - 🇳🇱 Dutch film and series reviews/descriptions from VPRO Cinema's database
 - 📺 Supports both movies and series
 - 🔞 Kijkwijzer content ratings (Dutch age classification: AL, 6, 9, 12, 14, 16, 18)
-- 🔍 Direct NPO POMS API access with automatic credential refresh
+- 🔍 Direct NPO POMS API access
 - 🌍 Smart title matching via TMDB — works in both directions (Translated → Original and Original → Translated)
+- 🔎 Cinema.nl fallback with IMDB verification when POMS API returns no results
 - 💾 Persistent caching (with TTL for not-found entries)
-- 🔧 Self-healing: auto-refreshes API credentials if authentication fails
 - 🐳 Docker-ready with health checks
 - 🔗 Combines with other providers (returns description + content rating by default)
 - ⚙️ Configurable: optionally return VPRO images and/or ratings
@@ -28,7 +28,7 @@ See [how it works](#how-it-works).
 ## Background
 
 For years I wanted to automatically pull the excellent Dutch film reviews
-from [VPRO Cinema](https://www.vprogids.nl/cinema/) into Plex. I made several
+from [VPRO Cinema](https://www.cinema.nl) (formerly vprogids.nl/cinema) into Plex. I made several
 attempts over the years, but without an official NPO API, I never got it to work. After getting tired of manually
 copying descriptions into Plex — only to have them overwritten by the next metadata refresh — I teamed up with Claude to
 build a proper solution. After some experimentation (first with scraping, then reverse-engineering the NPO's internal
@@ -219,17 +219,14 @@ curl -X POST "http://localhost:5100/cache/delete?pattern=apocalypse"
 
 ### Credential management
 
-Credentials auto-refresh on auth failure. Manual options:
+The POMS API uses hardcoded default credentials that have been working reliably.
 
 ```bash
-# Force refresh
-docker exec vpro-plex-provider python vpro_lookup.py --refresh-credentials
-
 # View cached credentials
 docker exec vpro-plex-provider cat cache/credentials.json
 ```
 
-> **Note:** `credentials.json` is created on first refresh. If missing, built-in defaults are used.
+> **Note:** Credential auto-refresh from vprogids.nl is no longer functional since the migration to cinema.nl, but the default credentials continue to work with the POMS API.
 
 ### Logs
 
@@ -285,7 +282,7 @@ vpro-cinema-plex/
 ├── vpro_metadata_provider.py   # Flask HTTP server for Plex
 ├── vpro_lookup.py              # Search orchestrator + CLI
 ├── poms_client.py              # NPO POMS API + TMDB clients
-├── vpro_scraper.py             # Web search fallback + page scraper
+├── vpro_scraper.py             # Cinema.nl fallback + page scraper
 ├── models.py                   # Shared data models (VPROFilm)
 │
 ├── cache.py                    # Disk cache with sharding
@@ -307,7 +304,7 @@ vpro-cinema-plex/
 | Provider not in Plex                    | Verify running: `curl http://localhost:5100/health`. Check network from Plex to provider.                                                                             |
 | No Dutch descriptions                   | Test film exists: `docker exec vpro-plex-provider python vpro_lookup.py "TITLE" --year YEAR -v`. Check logs: `docker-compose logs --tail=100`. Clear cache and retry. |
 | Metadata not updating after port change | Restart Plex server (known Plex bug with URL changes).                                                                                                                |
-| POMS auth errors                        | Force refresh: `docker exec vpro-plex-provider python vpro_lookup.py --refresh-credentials`                                                                           |
+| POMS auth errors                        | Default credentials should work. If issues persist, check NPO API availability                                                                                         |
 | Film not found                          | Try original title: `"Der Untergang"` instead of `"Downfall"`. Or provide IMDB ID: `--imdb tt0363163`                                                                 |
 | TMDB alternate titles not working       | Verify `"configured": true` and `"status": "ok"` under `tmdb` in `/health/ready` response.                                                                            |
 | Still it's not working                  | Restart your Plex server.                                                                                                                                             |
@@ -355,6 +352,14 @@ Single provider → two providers (`/movies` and `/series`). Required by Plex AP
 
 ## Changelog
 
+### v3.4.0
+- **Cinema.nl direct scraper** — Replaced DuckDuckGo/Startpage web search with direct cinema.nl scraping
+- **IMDB verification** — Cinema.nl fallback now verifies matches using IMDB IDs for reliable matching
+- **Migration complete** — vprogids.nl/cinema has fully migrated to cinema.nl
+- **Search optimizations** — Year-in-query and model=cinema parameter for better search ranking
+- **Circuit breaker** — Prevents hammering cinema.nl after repeated failures
+- **Credential refresh deprecated** — Auto-refresh from vprogids.nl no longer works (site returns 404)
+
 ### v3.3.0
 - **Kijkwijzer content ratings** — Dutch age classification (AL, 6, 9, 12, 14, 16, 18) now extracted from POMS API
 - **Configurable metadata fields** — New environment variables to control what metadata is returned:
@@ -384,7 +389,8 @@ Single provider → two providers (`/movies` and `/series`). Required by Plex AP
 - **Not all content covered** — Only films/series reviewed by VPRO Cinema
 - **Artwork optional** — Disabled by default; enable `VPRO_RETURN_IMAGES` or use Plex Movie fallback
 - **Ratings display limited** — Plex's Custom Metadata Provider API may store `audienceRating` values, but the rating *icon* displayed in the UI is controlled by the library's "Ratings Source" setting (Rotten Tomatoes, IMDb, or TMDb), not by the provider. Custom `ratingImage` URI schemes are not supported. This is a Plex architectural limitation — see the [Plex Dev/API Forum](https://forums.plex.tv/c/dev-api-corner/) for updates
-- **Web search fallback** — May hit rate limits or CAPTCHAs
+- **Credential refresh broken** — vprogids.nl/cinema has migrated to cinema.nl; auto-refresh no longer works but default credentials still function
+- **Cinema.nl fallback** — Direct scraping; may break if site structure changes
 
 ## License
 
@@ -392,7 +398,7 @@ MIT — Do whatever you want with it.
 
 ## Credits
 
-- [VPRO Cinema](https://vprogids.nl/cinema) for the Dutch film reviews
+- [VPRO Cinema](https://www.cinema.nl) for the Dutch film reviews
 - [TMDB](https://www.themoviedb.org/) for alternate title data
 - Klaas (c_kick/hnldesign) — Original idea and development
 - Claude (Anthropic) — Implementation assistance
