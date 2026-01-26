@@ -1,11 +1,16 @@
 """
 Thread-safe credential manager for POMS API authentication.
 
-Provides automatic credential extraction from vprogids.nl with:
+Provides credential management with:
 - Singleton pattern with thread-safe initialization
 - Cooldown to prevent hammering on failures
 - Atomic file operations for cache persistence
 - Graceful fallback to defaults
+
+Note: The credential extraction from vprogids.nl is currently broken
+(the source URL returns 404 after the migration to cinema.nl). However,
+the default credentials still work with the POMS API. The refresh
+mechanism is retained for potential future use.
 """
 
 import json
@@ -55,8 +60,8 @@ class CredentialManager:
 
     Credential sources (in priority order):
         1. Cached credentials from file
-        2. Fresh extraction from vprogids.nl
-        3. Hardcoded fallback defaults
+        2. Fresh extraction from vprogids.nl (currently broken - returns 404)
+        3. Hardcoded fallback defaults (these still work with POMS API)
     """
 
     # Patterns to find credentials in JavaScript (most specific first)
@@ -230,7 +235,11 @@ class CredentialManager:
 
     def _fetch_fresh_credentials(self) -> Optional[Credentials]:
         """
-        Fetch fresh credentials from vprogids.nl.
+        Attempt to fetch fresh credentials from vprogids.nl.
+
+        Note: This method is currently broken as vprogids.nl/cinema has
+        migrated to cinema.nl and the credential URL returns 404. The
+        default credentials still work with the POMS API.
 
         Scrapes the search page and linked JavaScript files
         for API credentials.

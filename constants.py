@@ -73,7 +73,7 @@ PROVIDER_IDENTIFIER: Final = "tv.plex.agents.custom.vpro.cinema"
 PROVIDER_IDENTIFIER_TV: Final = "tv.plex.agents.custom.vpro.cinema.tv"
 PROVIDER_TITLE: Final = "VPRO Cinema (Dutch Summaries) - Movies"
 PROVIDER_TITLE_TV: Final = "VPRO Cinema (Dutch Summaries) - Series"
-PROVIDER_VERSION: Final = "3.3.0"
+PROVIDER_VERSION: Final = "3.4.0"
 
 
 # =============================================================================
@@ -94,6 +94,7 @@ RATE_LIMIT_POMS: Final = 5.0
 RATE_LIMIT_TMDB: Final = 4.0  # TMDB allows 40/10s
 RATE_LIMIT_WEB_SEARCH: Final = 0.5  # Be nice to search engines
 RATE_LIMIT_VPRO: Final = 2.0  # Be nice to vprogids.nl
+RATE_LIMIT_CINEMA: Final = 2.0  # Be nice to cinema.nl
 
 
 # =============================================================================
@@ -123,6 +124,10 @@ POMS_API_BASE: Final = "https://rs.poms.omroep.nl/v1/api"
 POMS_ORIGIN: Final = "https://www.vprogids.nl"
 POMS_PROFILE: Final = "vprocinema"
 TMDB_API_BASE: Final = "https://api.themoviedb.org/3"
+
+# Cinema.nl URLs (vprogids.nl/cinema has migrated to cinema.nl)
+CINEMA_SEARCH_URL: Final = "https://www.cinema.nl/zoeken"
+CINEMA_BASE_URL: Final = "https://www.cinema.nl"
 
 
 # =============================================================================

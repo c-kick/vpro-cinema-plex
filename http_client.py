@@ -26,6 +26,7 @@ from constants import (
     RATE_LIMIT_TMDB,
     RATE_LIMIT_WEB_SEARCH,
     RATE_LIMIT_VPRO,
+    RATE_LIMIT_CINEMA,
 )
 
 logger = logging.getLogger(__name__)
@@ -129,6 +130,7 @@ class RateLimitedSession:
         "duckduckgo.com": RateLimitConfig(RATE_LIMIT_WEB_SEARCH, burst_size=2),
         "startpage.com": RateLimitConfig(RATE_LIMIT_WEB_SEARCH, burst_size=1),
         "vprogids.nl": RateLimitConfig(RATE_LIMIT_VPRO, burst_size=3),
+        "cinema.nl": RateLimitConfig(RATE_LIMIT_CINEMA, burst_size=3),
     }
 
     def __init__(
