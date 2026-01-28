@@ -888,15 +888,16 @@ def provider_root():
 @app.route('/series', methods=['GET'])
 def provider_root_tv():
     """Return provider information for TV SHOWS."""
+    # Only declare type 2 (Show) - let secondary providers handle seasons/episodes
+    # Declaring types 3/4 causes "metadata types not compatible" errors when
+    # combining with Plex Series because we return empty for seasons/episodes
     return jsonify({
         "MediaProvider": {
             "identifier": PROVIDER_IDENTIFIER_TV,
             "title": PROVIDER_TITLE_TV,
             "version": PROVIDER_VERSION,
             "Types": [
-                {"type": 2, "Scheme": [{"scheme": PROVIDER_IDENTIFIER_TV}]},
-                {"type": 3, "Scheme": [{"scheme": PROVIDER_IDENTIFIER_TV}]},
-                {"type": 4, "Scheme": [{"scheme": PROVIDER_IDENTIFIER_TV}]}
+                {"type": 2, "Scheme": [{"scheme": PROVIDER_IDENTIFIER_TV}]}
             ],
             "Feature": [
                 {"type": "metadata", "key": "/library/metadata"},
