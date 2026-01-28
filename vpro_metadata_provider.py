@@ -1,28 +1,32 @@
 #!/usr/bin/env python3
 """
-VPRO Cinema Plex Metadata Provider v3.2.0
+VPRO Cinema Plex Metadata Provider v4.0.0
 
-A custom Plex metadata provider that fetches Dutch film and TV series
-descriptions from VPRO Cinema.
+A custom Plex metadata provider that fetches Dutch film descriptions
+from VPRO Cinema.
+
+NOTE: This provider only supports MOVIES. TV series support has been removed
+because VPRO's data sources don't provide complete series metadata (seasons,
+episodes, episode descriptions), which causes Plex scanning failures.
 
 Architecture:
     /library/metadata/matches (POST)
         - Returns IMMEDIATELY with basic match (title, year, ratingKey)
-        - NO search - encodes title/year/imdb_id/media_type in ratingKey for later lookup
-        - Supports both movies (type 1) and TV shows (type 2)
+        - NO search - encodes title/year/imdb_id in ratingKey for later lookup
         - This prevents Plex UI timeouts
 
     /library/metadata/{ratingKey} (GET)
         - Does the actual VPRO lookup (Plex waits up to 90 seconds here)
         - Checks file cache first
         - Uses NPO POMS API (primary) with web search fallback
+        - If VPRO not found, returns TMDB fallback metadata so Plex can still add the movie
         - Returns summary if found, omits summary for fallback to secondary provider
 
 Environment Variables:
     PORT: Server port (default: 5100)
     LOG_LEVEL: Logging level (default: INFO)
     CACHE_DIR: Cache directory (default: ./cache)
-    TMDB_API_KEY: TMDB API key for alternate titles lookup (optional but recommended)
+    TMDB_API_KEY: TMDB API key for alternate titles lookup and fallback metadata (recommended)
 """
 
 import os
@@ -39,9 +43,7 @@ from constants import (
     MediaType,
     CacheStatus,
     PROVIDER_IDENTIFIER,
-    PROVIDER_IDENTIFIER_TV,
     PROVIDER_TITLE,
-    PROVIDER_TITLE_TV,
     PROVIDER_VERSION,
     VPRO_RETURN_SUMMARY,
     VPRO_RETURN_CONTENT_RATING,
@@ -59,7 +61,7 @@ from text_utils import (
 from logging_config import configure_logging, setup_flask_request_id, get_request_id
 from metrics import metrics
 from vpro_lookup import get_vpro_description
-from poms_client import search_poms_multiple
+from poms_client import search_poms_multiple, TMDBClient
 
 # =============================================================================
 # Configuration
@@ -146,21 +148,17 @@ def generate_rating_key(
     title: str,
     year: Optional[int] = None,
     imdb_id: Optional[str] = None,
-    media_type: str = "film"
 ) -> str:
     """
-    Generate a rating key encoding title, year, IMDB ID, and media type.
+    Generate a rating key encoding title, year, and IMDB ID.
 
-    Format: vpro-{sanitized_title}-{year}-{imdb_id}-{type}
-    Where type is 'm' for film/movie or 's' for series.
-
-    Backwards compatible: old keys without type suffix are treated as films.
+    Format: vpro-{sanitized_title}-{year}-{imdb_id}-m
+    The 'm' suffix indicates movie (kept for backward compatibility).
 
     Args:
         title: Content title
         year: Release year (optional)
         imdb_id: IMDB ID (optional)
-        media_type: "film" or "series"
 
     Returns:
         Encoded rating key string
@@ -168,8 +166,7 @@ def generate_rating_key(
     sanitized_title = normalize_for_cache_key(title) or "unknown"
     year_str = str(year) if year else "0"
     imdb_str = imdb_id.lower() if imdb_id else "none"
-    type_char = MediaType(media_type).to_type_char()
-    return f"vpro-{sanitized_title}-{year_str}-{imdb_str}-{type_char}"
+    return f"vpro-{sanitized_title}-{year_str}-{imdb_str}-m"
 
 
 # Rating key pattern: vpro-{title}-{year}-{imdb|none}-{m|s}
@@ -185,15 +182,16 @@ def parse_rating_key(rating_key: str) -> dict:
 
     Format: vpro-{title}-{year}-{imdb|none}-{m|s}
 
-    Backwards compatible: keys without type suffix are treated as films.
+    Backwards compatible: keys without type suffix or with 's' suffix
+    are now all treated as films (TV series support removed).
 
     Args:
         rating_key: Rating key to parse
 
     Returns:
-        Dict with title, year, imdb_id, media_type
+        Dict with title, year, imdb_id
     """
-    result = {"title": None, "year": None, "imdb_id": None, "media_type": "film"}
+    result = {"title": None, "year": None, "imdb_id": None}
 
     if not rating_key or not rating_key.startswith("vpro-"):
         return result
@@ -206,7 +204,7 @@ def parse_rating_key(rating_key: str) -> dict:
         result["year"] = year_val if year_val > 0 else None
         imdb = match.group("imdb")
         result["imdb_id"] = imdb if imdb != "none" else None
-        result["media_type"] = "series" if match.group("type") == "s" else "film"
+        # Note: type suffix is ignored now - all entries treated as movies
         return result
 
     # Fallback: Parse legacy format without type suffix
@@ -243,19 +241,18 @@ def parse_rating_key(rating_key: str) -> dict:
 
 @dataclass
 class MetadataRequest:
-    """Unified metadata request parameters."""
+    """Metadata request parameters."""
     rating_key: str
-    provider_type: str  # "movie" or "tv"
 
     @property
     def identifier(self) -> str:
-        """Get provider identifier based on type."""
-        return PROVIDER_IDENTIFIER_TV if self.provider_type == "tv" else PROVIDER_IDENTIFIER
+        """Get provider identifier."""
+        return PROVIDER_IDENTIFIER
 
     @property
     def base_path(self) -> str:
-        """Get base URL path based on type."""
-        return "/series" if self.provider_type == "tv" else "/movies"
+        """Get base URL path."""
+        return "/movies"
 
 
 def _build_media_container(
@@ -379,9 +376,7 @@ def _build_images_response(rating_key: str, identifier: str) -> dict:
 
 def handle_metadata_request(req: MetadataRequest) -> dict:
     """
-    Unified metadata handler for both movie and TV endpoints.
-
-    This eliminates code duplication between get_metadata() and get_metadata_tv().
+    Metadata handler for movie endpoints.
 
     Args:
         req: Metadata request parameters
@@ -401,7 +396,7 @@ def handle_metadata_request(req: MetadataRequest) -> dict:
     # Check cache first
     cached = cache.read(req.rating_key)
     if cached:
-        # Handle cached not-found entries (7-day TTL)
+        # Handle cached not-found entries (1-hour TTL - reduced from 7 days)
         if cached.status == CacheStatus.NOT_FOUND.value:
             logger.info(f"Cache hit (not-found) for {req.rating_key}")
             metrics.inc("cache_hits", labels={"status": "not_found"})
@@ -417,22 +412,20 @@ def handle_metadata_request(req: MetadataRequest) -> dict:
     title = parsed.get("title")
     year = parsed.get("year")
     imdb_id = parsed.get("imdb_id")
-    media_type = parsed.get("media_type", "film")
 
     if not title:
         logger.warning(f"Could not parse title from rating key: {req.rating_key}")
         return _build_empty_response(req.identifier)
 
-    logger.info(f"Cache miss - searching: title='{title}', year={year}, imdb={imdb_id}, type={media_type}")
+    logger.info(f"Cache miss - searching: title='{title}', year={year}, imdb={imdb_id}")
 
-    # Perform the VPRO lookup
+    # Perform the VPRO lookup (movies only)
     try:
         with metrics.timer("vpro_lookup_duration_ms"):
             film = get_vpro_description(
                 title=title,
                 year=year,
                 imdb_id=imdb_id,
-                media_type=media_type,
             )
     except Exception as e:
         logger.error(f"VPRO search error: {e}")
@@ -443,18 +436,101 @@ def handle_metadata_request(req: MetadataRequest) -> dict:
         entry = CacheEntry.from_vpro_film(film)
         cache.write(req.rating_key, entry)
         lookup_info = f" via {film.lookup_method}" if film.lookup_method else ""
-        logger.info(f"Found: {film.title} ({film.year}) [{film.media_type}] - {len(film.description)} chars{lookup_info}")
+        logger.info(f"Found: {film.title} ({film.year}) - {len(film.description)} chars{lookup_info}")
         metrics.inc("vpro_found")
         return _build_metadata_response(req, entry)
     else:
-        # Cache not-found results with shorter TTL (7 days vs 30 for found)
-        # This prevents hammering APIs on library refresh while still allowing
-        # newly added VPRO content to be found within a week
-        not_found_entry = CacheEntry.not_found(title, year, imdb_id, media_type)
+        # VPRO not found - try TMDB fallback for basic metadata
+        # This allows Plex to still add the movie with minimal info
+        tmdb_fallback = _try_tmdb_fallback(title, year, imdb_id)
+        if tmdb_fallback:
+            cache.write(req.rating_key, tmdb_fallback)
+            logger.info(f"TMDB fallback: {title} ({year}) - basic metadata provided")
+            metrics.inc("tmdb_fallback")
+            return _build_metadata_response(req, tmdb_fallback)
+
+        # Neither VPRO nor TMDB found - cache not-found with short TTL (1 hour)
+        # This prevents hammering APIs on library refresh while allowing
+        # quick retries for newly indexed content
+        not_found_entry = CacheEntry.not_found(title, year, imdb_id)
         cache.write(req.rating_key, not_found_entry)
-        logger.info(f"Not found: {title} ({year}) - cached for 7 days, omitting summary for fallback")
+        logger.info(f"Not found: {title} ({year}) - cached for 1 hour, omitting summary for fallback")
         metrics.inc("vpro_not_found")
         return _build_empty_response(req.identifier)
+
+
+def _try_tmdb_fallback(title: str, year: Optional[int], imdb_id: Optional[str]) -> Optional[CacheEntry]:
+    """
+    Try to get basic metadata from TMDB when VPRO search fails.
+
+    This provides fallback metadata so Plex can still add movies not in VPRO's database.
+    TMDB is already used for alternate title lookup, so we leverage that connection.
+
+    Args:
+        title: Movie title
+        year: Release year (optional)
+        imdb_id: IMDB ID (optional)
+
+    Returns:
+        CacheEntry with basic TMDB metadata, or None if not found
+    """
+    try:
+        tmdb = TMDBClient()
+        if not tmdb.api_key:
+            logger.debug("TMDB API key not configured, skipping fallback")
+            return None
+
+        # If we have IMDB ID, use it to find the movie
+        if imdb_id:
+            tmdb_id, detected_type = tmdb.find_by_imdb(imdb_id, "film")
+            if tmdb_id and detected_type == "film":
+                # Get basic movie details from TMDB
+                details = tmdb._get(f"/movie/{tmdb_id}")
+                if details:
+                    tmdb_title = details.get("title", title)
+                    tmdb_year = None
+                    if details.get("release_date"):
+                        try:
+                            tmdb_year = int(details["release_date"][:4])
+                        except (ValueError, IndexError):
+                            tmdb_year = year
+
+                    # Build a minimal cache entry with TMDB data
+                    # Note: We don't include TMDB overview as summary - that's not
+                    # VPRO content. We just provide basic metadata so Plex can add the movie.
+                    return CacheEntry(
+                        title=tmdb_title,
+                        year=tmdb_year,
+                        description=None,  # No description - let Plex use secondary agent
+                        url=None,
+                        imdb_id=imdb_id,
+                        vpro_id=None,
+                        media_type="film",
+                        status=CacheStatus.FOUND.value,
+                        lookup_method="tmdb_fallback",
+                    )
+
+        # No IMDB ID or not found - search by title+year
+        discovered_imdb, alt_titles = tmdb.search_by_title(title, year, "film")
+        if discovered_imdb:
+            # Found via title search
+            return CacheEntry(
+                title=title,
+                year=year,
+                description=None,  # No description - let Plex use secondary agent
+                url=None,
+                imdb_id=discovered_imdb,
+                vpro_id=None,
+                media_type="film",
+                status=CacheStatus.FOUND.value,
+                lookup_method="tmdb_fallback",
+                discovered_imdb=discovered_imdb,
+            )
+
+    except Exception as e:
+        logger.warning(f"TMDB fallback error: {e}")
+
+    return None
 
 
 # =============================================================================
@@ -467,22 +543,20 @@ class MatchRequest:
     title: str
     year: Optional[int]
     imdb_id: Optional[str]
-    media_type: str
-    provider_type: str  # "movie" or "tv"
     manual: bool = False  # Fix Match mode - return multiple results
 
     @property
     def identifier(self) -> str:
-        return PROVIDER_IDENTIFIER_TV if self.provider_type == "tv" else PROVIDER_IDENTIFIER
+        return PROVIDER_IDENTIFIER
 
     @property
     def base_path(self) -> str:
-        return "/series" if self.provider_type == "tv" else "/movies"
+        return "/movies"
 
 
 def handle_match_request(req: MatchRequest) -> dict:
     """
-    Unified match handler for both movie and TV endpoints.
+    Match handler for movie endpoints.
 
     Returns IMMEDIATELY - actual lookup happens in get_metadata.
 
@@ -492,14 +566,14 @@ def handle_match_request(req: MatchRequest) -> dict:
     Returns:
         Plex-compatible match response
     """
-    logger.info(f"Match request: title='{req.title}', year={req.year}, imdb={req.imdb_id}, type={req.media_type}")
-    metrics.inc("match_requests", labels={"type": req.media_type})
+    logger.info(f"Match request: title='{req.title}', year={req.year}, imdb={req.imdb_id}")
+    metrics.inc("match_requests")
 
     if not req.title:
         return _build_empty_response(req.identifier)
 
-    rating_key = generate_rating_key(req.title, req.year, req.imdb_id, req.media_type)
-    plex_type = MediaType(req.media_type).to_plex_type_str()
+    rating_key = generate_rating_key(req.title, req.year, req.imdb_id)
+    plex_type = "movie"
 
     match_metadata = {
         "ratingKey": rating_key,
@@ -515,7 +589,7 @@ def handle_match_request(req: MatchRequest) -> dict:
     if req.imdb_id:
         match_metadata["Guid"] = [{"id": f"imdb://{req.imdb_id}"}]
 
-    logger.info(f"Match returned: {req.title} ({req.year}) [{req.media_type}] -> {rating_key}")
+    logger.info(f"Match returned: {req.title} ({req.year}) -> {rating_key}")
 
     return {
         "MediaContainer": {
@@ -542,20 +616,17 @@ def handle_manual_match_request(req: MatchRequest) -> dict:
     Returns:
         Plex-compatible response with multiple metadata entries
     """
-    logger.info(
-        f"Manual match (Fix Match): title='{req.title}', year={req.year}, "
-        f"type={req.media_type}"
-    )
-    metrics.inc("manual_match_requests", labels={"type": req.media_type})
+    logger.info(f"Manual match (Fix Match): title='{req.title}', year={req.year}")
+    metrics.inc("manual_match_requests")
 
     if not req.title:
         return _build_empty_response(req.identifier)
 
-    # Perform immediate search for Fix Match
+    # Perform immediate search for Fix Match (movies only)
     films = search_poms_multiple(
         title=req.title,
         year=req.year,
-        media_type=req.media_type,
+        media_type="film",
         max_results=10,
     )
 
@@ -565,10 +636,8 @@ def handle_manual_match_request(req: MatchRequest) -> dict:
 
     metadata_list = []
     for film in films:
-        rating_key = generate_rating_key(
-            film.title, film.year, film.imdb_id, film.media_type
-        )
-        plex_type = MediaType(film.media_type).to_plex_type_str()
+        rating_key = generate_rating_key(film.title, film.year, film.imdb_id)
+        plex_type = "movie"
 
         metadata = {
             "ratingKey": rating_key,
@@ -611,9 +680,7 @@ def handle_manual_match_request(req: MatchRequest) -> dict:
         entry = CacheEntry.from_vpro_film(film, lookup_method="manual_match", sanitize_desc=False)
         cache.write(rating_key, entry)
 
-    logger.info(
-        f"Manual match: Returning {len(metadata_list)} results for '{req.title}'"
-    )
+    logger.info(f"Manual match: Returning {len(metadata_list)} results for '{req.title}'")
 
     return {
         "MediaContainer": {
@@ -626,20 +693,18 @@ def handle_manual_match_request(req: MatchRequest) -> dict:
     }
 
 
-def parse_match_data(data: dict, provider_type: str) -> MatchRequest:
+def parse_match_data(data: dict) -> MatchRequest:
     """
     Parse match request data from Plex.
 
     Args:
         data: JSON request data
-        provider_type: "movie" or "tv"
 
     Returns:
         MatchRequest with parsed parameters
     """
     title = data.get('title', '')
     year = data.get('year')
-    metadata_type = data.get('type', 1 if provider_type == "movie" else 2)
     guid = data.get('guid', '')
     filename = data.get('filename', '')
     manual = data.get('manual', 0) == 1  # Fix Match mode
@@ -668,15 +733,10 @@ def parse_match_data(data: dict, provider_type: str) -> MatchRequest:
     if not year and filename:
         year = extract_year_from_text(filename)
 
-    # Determine media type from Plex type
-    media_type = MediaType.from_plex_type(metadata_type)
-
     return MatchRequest(
         title=title,
         year=year,
         imdb_id=imdb_id,
-        media_type=media_type.value,
-        provider_type=provider_type,
         manual=manual,
     )
 
@@ -694,30 +754,23 @@ def test_search():
         /test?title=Apocalypse+Now
         /test?title=Apocalypse+Now&year=1979
         /test?title=The+Last+Metro&year=1980&imdb=tt0080610
-        /test?title=Adolescence&year=2025&type=series
         /test?title=Downfall&year=2004&skip_poms=1  # Test cinema.nl fallback
         /test?title=Test&skip_poms=1&skip_tmdb=1    # Test cinema.nl only
     """
     title = request.args.get('title', '')
     year = request.args.get('year', type=int)
     imdb_id = request.args.get('imdb', '')
-    media_type = request.args.get('type', 'all')
     skip_poms = request.args.get('skip_poms', '').lower() in ('1', 'true', 'yes')
     skip_tmdb = request.args.get('skip_tmdb', '').lower() in ('1', 'true', 'yes')
-
-    if media_type not in ('film', 'series', 'all'):
-        media_type = 'all'
 
     if not title:
         return jsonify({
             "error": "Missing 'title' parameter",
-            "usage": "/test?title=Name&year=1979&imdb=tt1234567&type=film|series|all&skip_poms=1&skip_tmdb=1",
+            "usage": "/test?title=Name&year=1979&imdb=tt1234567&skip_poms=1&skip_tmdb=1",
             "examples": [
                 "/test?title=Apocalypse+Now&year=1979",
                 "/test?title=The+Last+Metro&year=1980&imdb=tt0080610",
-                "/test?title=Adolescence&year=2025&type=series",
                 "/test?title=Der+Untergang&year=2004&skip_poms=1  (test cinema.nl fallback)",
-                "/test?title=Adolescence&year=2025&skip_poms=1&skip_tmdb=1  (test cinema.nl only)"
             ]
         }), 400
 
@@ -728,14 +781,13 @@ def test_search():
         skip_info.append("TMDB")
     skip_str = f" [SKIP: {', '.join(skip_info)}]" if skip_info else ""
 
-    logger.info(f"Test search: title='{title}', year={year}, imdb={imdb_id}, type={media_type}{skip_str}")
+    logger.info(f"Test search: title='{title}', year={year}, imdb={imdb_id}{skip_str}")
 
     try:
         film = get_vpro_description(
             title=title,
             year=year,
             imdb_id=imdb_id or None,
-            media_type=media_type,
             skip_poms=skip_poms,
             skip_tmdb=skip_tmdb,
         )
@@ -757,14 +809,12 @@ def test_search():
             "title": title,
             "year": year,
             "imdb": imdb_id,
-            "type": media_type,
             "skip_poms": skip_poms,
             "skip_tmdb": skip_tmdb,
         },
         "result": {
             "title": film.title,
             "year": film.year,
-            "media_type": film.media_type,
             "lookup_method": getattr(film, 'lookup_method', None),
             "director": getattr(film, 'director', None),
             "imdb_id": film.imdb_id,
@@ -885,26 +935,6 @@ def provider_root():
     })
 
 
-@app.route('/series', methods=['GET'])
-def provider_root_tv():
-    """Return provider information for TV SHOWS."""
-    # Only declare type 2 (Show) - let secondary providers handle seasons/episodes
-    # Declaring types 3/4 causes "metadata types not compatible" errors when
-    # combining with Plex Series because we return empty for seasons/episodes
-    return jsonify({
-        "MediaProvider": {
-            "identifier": PROVIDER_IDENTIFIER_TV,
-            "title": PROVIDER_TITLE_TV,
-            "version": PROVIDER_VERSION,
-            "Types": [
-                {"type": 2, "Scheme": [{"scheme": PROVIDER_IDENTIFIER_TV}]}
-            ],
-            "Feature": [
-                {"type": "metadata", "key": "/library/metadata"},
-                {"type": "match", "key": "/library/metadata/matches"}
-            ]
-        }
-    })
 
 
 # =============================================================================
@@ -914,7 +944,7 @@ def provider_root_tv():
 @app.route('/movies/library/metadata/<rating_key>', methods=['GET'])
 def get_metadata(rating_key: str):
     """Get metadata for a movie by its rating key."""
-    req = MetadataRequest(rating_key=rating_key, provider_type="movie")
+    req = MetadataRequest(rating_key=rating_key)
     return jsonify(handle_metadata_request(req))
 
 
@@ -922,17 +952,11 @@ def get_metadata(rating_key: str):
 def match_metadata():
     """Match movie content based on hints from Plex."""
     data = request.get_json() or {}
-    metadata_type = data.get('type', 1)
 
     # Log raw request data for debugging
     logger.debug(f"Match request raw data: {data}")
 
-    # Seasons and Episodes - delegate to secondary provider
-    if metadata_type in (3, 4):
-        logger.info(f"Season/Episode match request (type {metadata_type}) - delegating")
-        return jsonify(_build_empty_response(PROVIDER_IDENTIFIER))
-
-    match_req = parse_match_data(data, "movie")
+    match_req = parse_match_data(data)
 
     # Fix Match mode - return multiple results for user selection
     if match_req.manual:
@@ -949,13 +973,13 @@ def match_metadata():
                 pass
 
     # Log match request for troubleshooting
-    rating_key = generate_rating_key(match_req.title, match_req.year, match_req.imdb_id, match_req.media_type)
+    rating_key = generate_rating_key(match_req.title, match_req.year, match_req.imdb_id)
     log_match_request(
         raw_data=data,
         title=match_req.title,
         year=match_req.year,
         imdb_id=match_req.imdb_id,
-        media_type=match_req.media_type,
+        media_type="film",
         rating_key=rating_key,
         filename=filename,
         guid=data.get('guid', ''),
@@ -976,70 +1000,6 @@ def get_extras(rating_key: str):
     return jsonify(_build_empty_response(PROVIDER_IDENTIFIER))
 
 
-# =============================================================================
-# TV Endpoints
-# =============================================================================
-
-@app.route('/series/library/metadata/<rating_key>', methods=['GET'])
-def get_metadata_tv(rating_key: str):
-    """Get metadata for a TV show by its rating key."""
-    req = MetadataRequest(rating_key=rating_key, provider_type="tv")
-    return jsonify(handle_metadata_request(req))
-
-
-@app.route('/series/library/metadata/matches', methods=['POST'])
-def match_metadata_tv():
-    """Match TV content based on hints from Plex."""
-    data = request.get_json() or {}
-    metadata_type = data.get('type', 2)
-
-    # Seasons and Episodes - delegate to secondary provider
-    if metadata_type in (3, 4):
-        logger.info(f"Season/Episode match request (type {metadata_type}) - delegating")
-        return jsonify(_build_empty_response(PROVIDER_IDENTIFIER_TV))
-
-    match_req = parse_match_data(data, "tv")
-
-    # Fix Match mode - return multiple results for user selection
-    if match_req.manual:
-        return jsonify(handle_manual_match_request(match_req))
-
-    # Extract filename for logging
-    filename = data.get('filename', '')
-    if not filename:
-        media = data.get('Media', [])
-        if media:
-            try:
-                filename = media[0].get('Part', [{}])[0].get('file', '')
-            except (IndexError, KeyError, TypeError):
-                pass
-
-    # Log match request for troubleshooting
-    rating_key = generate_rating_key(match_req.title, match_req.year, match_req.imdb_id, match_req.media_type)
-    log_match_request(
-        raw_data=data,
-        title=match_req.title,
-        year=match_req.year,
-        imdb_id=match_req.imdb_id,
-        media_type=match_req.media_type,
-        rating_key=rating_key,
-        filename=filename,
-        guid=data.get('guid', ''),
-    )
-
-    return jsonify(handle_match_request(match_req))
-
-
-@app.route('/series/library/metadata/<rating_key>/images', methods=['GET'])
-def get_images_tv(rating_key: str):
-    """Return VPRO images if enabled, otherwise empty."""
-    return jsonify(_build_images_response(rating_key, PROVIDER_IDENTIFIER_TV))
-
-
-@app.route('/series/library/metadata/<rating_key>/extras', methods=['GET'])
-def get_extras_tv(rating_key: str):
-    """Return empty - no extras."""
-    return jsonify(_build_empty_response(PROVIDER_IDENTIFIER_TV))
 
 
 # =============================================================================
@@ -1135,8 +1095,8 @@ def metrics_endpoint():
 
 if __name__ == "__main__":
     logger.info(f"Starting VPRO Cinema Provider v{PROVIDER_VERSION} on port {PORT}")
-    logger.info(f"Provider identifiers: {PROVIDER_IDENTIFIER}, {PROVIDER_IDENTIFIER_TV}")
-    logger.info(f"TMDB alternate titles: {'enabled' if os.environ.get('TMDB_API_KEY') else 'disabled'}")
+    logger.info(f"Provider identifier: {PROVIDER_IDENTIFIER} (movies only)")
+    logger.info(f"TMDB: {'enabled' if os.environ.get('TMDB_API_KEY') else 'disabled'}")
     logger.info(f"Cache directory: {CACHE_DIR}")
     logger.info(f"Test endpoint: http://localhost:{PORT}/test?title=TITLE&year=YEAR")
     app.run(host="0.0.0.0", port=PORT, debug=False)

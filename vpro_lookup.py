@@ -2,8 +2,10 @@
 """
 VPRO Cinema Lookup Orchestrator
 
-Main entry point for searching VPRO Cinema database for Dutch film
-and TV series descriptions.
+Main entry point for searching VPRO Cinema database for Dutch film descriptions.
+
+NOTE: This module only supports MOVIES. TV series support has been removed
+because VPRO's data sources don't provide complete series metadata.
 
 Search Strategy:
     1. PRIMARY: NPO POMS API (direct database query via authenticated REST API)
@@ -20,11 +22,6 @@ Usage:
     film = get_vpro_description("The Matrix", year=1999)
     if film:
         print(film.description)
-
-    # Search specifically for a series
-    series = get_vpro_description("Adolescence", year=2025, media_type="series")
-    if series:
-        print(series.description)
 """
 
 import logging
@@ -50,13 +47,14 @@ def get_vpro_description(
     year: Optional[int] = None,
     imdb_id: Optional[str] = None,
     director: Optional[str] = None,
-    media_type: str = "all",
     verbose: bool = False,
     skip_poms: bool = False,
     skip_tmdb: bool = False,
 ) -> Optional[VPROFilm]:
     """
-    Search VPRO Cinema for a film or series and return its Dutch description.
+    Search VPRO Cinema for a film and return its Dutch description.
+
+    NOTE: Only movies are supported. TV series support has been removed.
 
     Search Strategy:
         1. Search with original title via POMS API (unless skip_poms=True)
@@ -68,7 +66,6 @@ def get_vpro_description(
         year: Release year (improves matching)
         imdb_id: IMDB ID (enables alternate title lookup and verification)
         director: Director name (for disambiguation)
-        media_type: "film", "series", or "all" (default)
         verbose: Enable verbose logging
         skip_poms: Skip POMS API, go directly to fallback (for testing)
         skip_tmdb: Skip TMDB alternate title lookup (for testing)
@@ -79,9 +76,8 @@ def get_vpro_description(
     if verbose:
         logging.basicConfig(level=logging.DEBUG)
 
-    type_str = f" [{media_type}]" if media_type != "all" else ""
     imdb_str = f" [{imdb_id}]" if imdb_id else ""
-    logger.info(f"Searching VPRO: '{title}' ({year}){type_str}{imdb_str}")
+    logger.info(f"Searching VPRO: '{title}' ({year}){imdb_str}")
 
     metrics.inc("vpro_searches")
 
@@ -95,7 +91,7 @@ def get_vpro_description(
 
         # Step 1: Try original title via POMS API (unless skipped)
         if not skip_poms:
-            result = search_poms_api(title, year, director, media_type, session, imdb_id)
+            result = search_poms_api(title, year, director, session=session, imdb_id=imdb_id)
             if result:
                 result.lookup_method = "poms"
                 metrics.inc("vpro_searches", labels={"result": "found", "method": "poms"})
@@ -110,11 +106,11 @@ def get_vpro_description(
             if imdb_id:
                 # Have IMDB ID - fetch alternate titles directly
                 logger.info(f"No POMS match for '{title}' - fetching alternate titles by IMDB...")
-                alt_titles = tmdb.get_alternate_titles(imdb_id, media_type)
+                alt_titles = tmdb.get_alternate_titles(imdb_id)
             else:
                 # No IMDB ID - search TMDB by title+year to find original title
                 logger.info(f"No POMS match for '{title}' - searching TMDB for alternate titles...")
-                discovered_imdb, alt_titles = tmdb.search_by_title(title, year, media_type)
+                discovered_imdb, alt_titles = tmdb.search_by_title(title, year)
                 if discovered_imdb:
                     logger.info(f"TMDB found IMDB ID: {discovered_imdb}")
 
@@ -125,7 +121,7 @@ def get_vpro_description(
                 for alt_title in alt_titles[:5]:
                     logger.info(f"Trying alternate title: '{alt_title}'")
 
-                    result = search_poms_api(alt_title, year, director, media_type, session, imdb_id)
+                    result = search_poms_api(alt_title, year, director, session=session, imdb_id=imdb_id)
                     if result:
                         result.lookup_method = "tmdb_alt"
                         result.discovered_imdb = discovered_imdb
@@ -141,7 +137,6 @@ def get_vpro_description(
             year=year,
             imdb_id=imdb_id or discovered_imdb,
             alt_titles=alt_titles,
-            media_type=media_type,
             session=session
         )
         if result:
@@ -167,14 +162,13 @@ def main():
     from logging_config import configure_logging
 
     parser = argparse.ArgumentParser(
-        description="Search VPRO Cinema for Dutch film and series descriptions",
+        description="Search VPRO Cinema for Dutch film descriptions",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   %(prog)s "The Matrix" --year 1999
   %(prog)s "Le dernier métro" --year 1980
   %(prog)s "The Last Metro" --year 1980 --imdb tt0080610
-  %(prog)s "Adolescence" --year 2025 --type series
   %(prog)s --refresh-credentials
         """
     )
@@ -182,12 +176,6 @@ Examples:
     parser.add_argument("--year", "-y", type=int, help="Release year")
     parser.add_argument("--imdb", "-i", help="IMDB ID (e.g., tt0080610)")
     parser.add_argument("--director", "-d", help="Director name")
-    parser.add_argument(
-        "--type", "-t",
-        choices=["film", "series", "all"],
-        default="all",
-        help="Media type to search for (default: all)"
-    )
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     parser.add_argument(
         "--refresh-credentials",
@@ -204,7 +192,7 @@ Examples:
         action="store_true",
         help="Skip TMDB alternate title lookup"
     )
-    parser.add_argument("--version", action="version", version="%(prog)s 3.4.0")
+    parser.add_argument("--version", action="version", version="%(prog)s 4.0.0")
 
     args = parser.parse_args()
 
@@ -226,7 +214,6 @@ Examples:
         parser.print_help()
         return 1
 
-    type_str = f" [{args.type}]" if args.type != "all" else ""
     skip_info = []
     if args.skip_poms:
         skip_info.append("POMS")
@@ -235,7 +222,7 @@ Examples:
     skip_str = f" [SKIP: {', '.join(skip_info)}]" if skip_info else ""
 
     print(f"Searching VPRO Cinema for: {args.title}" +
-          (f" ({args.year})" if args.year else "") + type_str + skip_str)
+          (f" ({args.year})" if args.year else "") + skip_str)
     print("-" * 60)
 
     film = get_vpro_description(
@@ -243,18 +230,15 @@ Examples:
         year=args.year,
         imdb_id=args.imdb,
         director=args.director,
-        media_type=args.type,
         verbose=args.verbose,
         skip_poms=args.skip_poms,
         skip_tmdb=args.skip_tmdb,
     )
 
     if film:
-        type_label = "Series" if film.media_type == "series" else "Film"
         method_label = getattr(film, 'lookup_method', 'unknown') or 'unknown'
-        print(f"\nFound ({type_label}) via {method_label}: {film.title}")
+        print(f"\nFound via {method_label}: {film.title}")
         print(f"  Year: {film.year or 'Unknown'}")
-        print(f"  Type: {film.media_type}")
         print(f"  Lookup Method: {method_label}")
         print(f"  Director: {film.director or 'Unknown'}")
         print(f"  Rating: {film.vpro_rating}/10" if film.vpro_rating else "  Rating: N/A")

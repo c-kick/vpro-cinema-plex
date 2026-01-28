@@ -3,6 +3,8 @@ Shared data models for VPRO metadata lookup.
 
 This module contains data classes used across the VPRO Cinema metadata provider,
 kept separate to avoid circular imports between modules.
+
+NOTE: This provider only supports MOVIES. TV series support has been removed.
 """
 
 from dataclasses import dataclass, field
@@ -11,7 +13,11 @@ from typing import Optional, List, Dict, Any
 
 @dataclass
 class VPROFilm:
-    """Represents a film or series with VPRO Cinema metadata."""
+    """Represents a film with VPRO Cinema metadata.
+
+    Note: Despite the name, this only represents movies. TV series support
+    has been removed. The media_type field is kept for backward compatibility.
+    """
     title: str
     year: Optional[int] = None
     director: Optional[str] = None
@@ -23,9 +29,9 @@ class VPROFilm:
     vpro_rating: Optional[int] = None
     content_rating: Optional[str] = None  # Kijkwijzer age rating (AL, 6, 9, 12, 14, 16, 18)
     images: List[Dict[str, str]] = field(default_factory=list)  # [{type, url, title}]
-    media_type: str = "film"  # "film" or "series"
+    media_type: str = "film"  # Always "film" (kept for backward compatibility)
     # Lookup diagnostics
-    lookup_method: Optional[str] = None  # "poms", "tmdb_alt", "web"
+    lookup_method: Optional[str] = None  # "poms", "tmdb_alt", "web", "tmdb_fallback"
     discovered_imdb: Optional[str] = None  # IMDB found via TMDB lookup
 
     def to_dict(self) -> Dict[str, Any]:

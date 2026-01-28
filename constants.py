@@ -28,34 +28,28 @@ class MediaType(str, Enum):
     Media type enumeration.
 
     Inherits from str for JSON serialization compatibility.
+    Note: This provider only supports movies. The enum is kept for
+    backward compatibility with cached entries but only FILM is used.
     """
     FILM = "film"
-    SERIES = "series"
-    ALL = "all"
 
     @classmethod
     def from_plex_type(cls, plex_type: int) -> "MediaType":
-        """Convert Plex type ID to MediaType."""
-        mapping = {
-            1: cls.FILM,    # Movie
-            2: cls.SERIES,  # TV Show
-            3: cls.SERIES,  # Season
-            4: cls.SERIES,  # Episode
-        }
-        return mapping.get(plex_type, cls.FILM)
+        """Convert Plex type ID to MediaType. Always returns FILM."""
+        return cls.FILM
 
     def to_plex_type_str(self) -> str:
         """Convert to Plex type string."""
-        return "show" if self == MediaType.SERIES else "movie"
+        return "movie"
 
     def to_type_char(self) -> str:
         """Convert to single char for rating key encoding."""
-        return "s" if self == MediaType.SERIES else "m"
+        return "m"
 
     @classmethod
     def from_type_char(cls, char: str) -> "MediaType":
-        """Convert from rating key char to MediaType."""
-        return cls.SERIES if char == "s" else cls.FILM
+        """Convert from rating key char to MediaType. Always returns FILM."""
+        return cls.FILM
 
 
 class CacheStatus(str, Enum):
@@ -70,10 +64,8 @@ class CacheStatus(str, Enum):
 # =============================================================================
 
 PROVIDER_IDENTIFIER: Final = "tv.plex.agents.custom.vpro.cinema"
-PROVIDER_IDENTIFIER_TV: Final = "tv.plex.agents.custom.vpro.cinema.tv"
-PROVIDER_TITLE: Final = "VPRO Cinema (Dutch Summaries) - Movies"
-PROVIDER_TITLE_TV: Final = "VPRO Cinema (Dutch Summaries) - Series"
-PROVIDER_VERSION: Final = "3.4.0"
+PROVIDER_TITLE: Final = "VPRO Cinema (Dutch Summaries)"
+PROVIDER_VERSION: Final = "4.0.0"  # Major version bump: TV series support removed
 
 
 # =============================================================================
@@ -81,7 +73,7 @@ PROVIDER_VERSION: Final = "3.4.0"
 # =============================================================================
 
 DEFAULT_CACHE_TTL_FOUND: Final = 30 * 24 * 60 * 60  # 30 days for found entries
-DEFAULT_CACHE_TTL_NOT_FOUND: Final = 7 * 24 * 60 * 60  # 7 days for not-found entries
+DEFAULT_CACHE_TTL_NOT_FOUND: Final = 1 * 60 * 60  # 1 hour for not-found entries (reduced from 7 days)
 MAX_CACHE_SIZE_MB: Final = 500  # Maximum cache size in MB
 MAX_CACHE_ENTRIES: Final = 10000  # Maximum number of cached items
 
