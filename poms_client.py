@@ -36,6 +36,9 @@ from text_utils import (
     build_unique_list,
 )
 
+# Lazy imports to avoid circular dependency
+# vpro_scraper imports from this module, so we import from it inside functions
+
 logger = logging.getLogger(__name__)
 
 # Environment variables
@@ -724,13 +727,14 @@ def search_poms_multiple(
     Unlike search_poms_api() which returns only the best match,
     this returns all valid matches with descriptions for user selection.
 
-    Note: Year parameter is accepted but NOT used for filtering.
-    Fix Match should show ALL matches regardless of year, letting
-    the user choose the correct one (e.g., original vs director's cut).
+    Search strategy:
+    1. Search POMS API for matches
+    2. Search cinema.nl for additional matches (fallback)
+    3. Combine and deduplicate results
 
     Args:
         title: Title to search for
-        year: Ignored - kept for API compatibility
+        year: Optional year (used for cinema.nl search ranking)
         media_type: "film", "series", or "all"
         max_results: Maximum number of results to return (default 10)
         session: Optional shared session
@@ -738,46 +742,89 @@ def search_poms_multiple(
     Returns:
         List of VPROFilm objects with valid descriptions
     """
-    poms = POMSAPIClient(session=session)
+    # Lazy import to avoid circular dependency
+    from vpro_scraper import CinemaSearcher, VPROPageScraper
 
+    poms = POMSAPIClient(session=session)
+    films = []
+    seen_vpro_ids = set()
+
+    # Step 1: Search POMS API
     try:
         items = poms.search(title, max_results=max_results, media_type=media_type)
 
-        if not items:
-            logger.debug(f"POMS multiple: No results for '{title}'")
-            return []
+        if items:
+            logger.debug(f"POMS multiple: {len(items)} results for '{title}'")
 
-        logger.debug(f"POMS multiple: {len(items)} results for '{title}'")
-
-        films = []
-        seen_vpro_ids = set()
-
-        for item in items:
-            film = poms.parse_item(item)
-            if not film or not film.description:
-                continue
-
-            # Skip if media type doesn't match (when filtering)
-            if media_type != "all" and film.media_type != media_type:
-                continue
-
-            # No year filtering for Fix Match - show ALL matches
-            # User manually selects the correct version (original, redux, etc.)
-
-            # Deduplicate by VPRO ID
-            if film.vpro_id:
-                if film.vpro_id in seen_vpro_ids:
+            for item in items:
+                film = poms.parse_item(item)
+                if not film or not film.description:
                     continue
-                seen_vpro_ids.add(film.vpro_id)
 
-            films.append(film)
+                # Skip if media type doesn't match (when filtering)
+                if media_type != "all" and film.media_type != media_type:
+                    continue
 
-        logger.info(f"POMS multiple: Returning {len(films)} matches for '{title}'")
-        return films[:max_results]
+                # Deduplicate by VPRO ID
+                if film.vpro_id:
+                    if film.vpro_id in seen_vpro_ids:
+                        continue
+                    seen_vpro_ids.add(film.vpro_id)
+
+                film.lookup_method = "poms"
+                films.append(film)
+        else:
+            logger.debug(f"POMS multiple: No results for '{title}'")
 
     except Exception as e:
         logger.error(f"POMS multiple search error: {e}")
-        return []
+
+    # Step 2: Search cinema.nl for additional results
+    # Always search cinema.nl to ensure we find items not in POMS
+    try:
+        logger.debug(f"Cinema.nl multiple: Searching for '{title}'")
+        searcher = CinemaSearcher(session=session)
+        scraper = VPROPageScraper(session=session)
+
+        # Search cinema.nl (include year for better ranking)
+        candidates = searcher.search(title, year)
+
+        if candidates:
+            logger.debug(f"Cinema.nl multiple: {len(candidates)} candidates for '{title}'")
+
+            for candidate in candidates:
+                # Skip if we already have this VPRO ID from POMS
+                # Extract VPRO ID from URL pattern /db/{id}-{slug}
+                vpro_id_match = re.search(r'/db/(\d+)-', candidate.url)
+                if vpro_id_match:
+                    vpro_id = vpro_id_match.group(1)
+                    if vpro_id in seen_vpro_ids:
+                        logger.debug(f"Cinema.nl: Skipping duplicate {vpro_id}")
+                        continue
+
+                # Scrape the detail page
+                film = scraper.scrape(candidate.url)
+                if not film or not film.description:
+                    continue
+
+                # Skip if media type doesn't match (when filtering)
+                if media_type != "all" and film.media_type != media_type:
+                    continue
+
+                # Add to results
+                if film.vpro_id:
+                    seen_vpro_ids.add(film.vpro_id)
+
+                film.lookup_method = "cinema_search"
+                films.append(film)
+
+                logger.debug(f"Cinema.nl: Added {film.title} ({film.year})")
+
+    except Exception as e:
+        logger.error(f"Cinema.nl multiple search error: {e}")
+
+    logger.info(f"POMS multiple: Returning {len(films)} matches for '{title}'")
+    return films[:max_results]
 
 
 __all__ = [
