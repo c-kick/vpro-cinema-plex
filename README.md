@@ -1,7 +1,9 @@
 # VPRO Cinema Metadata Provider for Plex
 
-A custom metadata provider that supplies Dutch film and series descriptions
+A custom metadata provider that supplies Dutch film descriptions
 from [VPRO Cinema](https://www.cinema.nl/) to Plex Media Server.
+
+> **Note:** As of v4.0.0, this provider only supports **movies**. TV series support has been removed because VPRO's data sources don't provide complete series metadata (seasons, episodes, episode descriptions), which caused Plex scanning failures.
 
 See [how it works](#how-it-works).
 
@@ -14,13 +16,14 @@ See [how it works](#how-it-works).
 
 ## Features
 
-- 🇳🇱 Dutch film and series reviews/descriptions from VPRO Cinema's database
-- 📺 Supports both movies and series
+- 🇳🇱 Dutch film reviews/descriptions from VPRO Cinema's database
+- 🎬 Movies only (TV series not supported — see note above)
 - 🔞 Kijkwijzer content ratings (Dutch age classification: AL, 6, 9, 12, 14, 16, 18)
 - 🔍 Direct NPO POMS API access
 - 🌍 Smart title matching via TMDB — works in both directions (Translated → Original and Original → Translated)
 - 🔎 Cinema.nl fallback with IMDB verification when POMS API returns no results
-- 💾 Persistent caching (with TTL for not-found entries)
+- 📦 TMDB fallback metadata — movies not in VPRO can still be added to Plex with basic info
+- 💾 Persistent caching (with short 1-hour TTL for not-found entries)
 - 🐳 Docker-ready with health checks
 - 🔗 Combines with other providers (returns description + content rating by default)
 - ⚙️ Configurable: optionally return VPRO images and/or ratings
@@ -119,7 +122,7 @@ vpro-plex-provider:
     - your-plex-network  # Must be on same network as Plex
 ```
 Note: if you use the plex network, you can use 'vpro-plex-provider' (instead of `localhost`, as in the examples below)
-to directly reference the agent in the provider URLs in Plex: `http://vpro-plex-provider:5100/movies` and `http://vpro-plex-provider:5100/series`
+to directly reference the agent in the provider URL in Plex: `http://vpro-plex-provider:5100/movies`
 
 </details>
 
@@ -127,51 +130,35 @@ to directly reference the agent in the provider URLs in Plex: `http://vpro-plex-
 
 > **Important:** Replace `localhost` with your server's IP if Plex runs on a different host.
 
-This provider exposes two separate endpoints (required by Plex's Custom Metadata Provider API for proper secondary
-provider combining):
+| Endpoint                       | Provider Name                   | Use For  |
+|--------------------------------|---------------------------------|----------|
+| `http://localhost:5100/movies` | VPRO Cinema (Dutch Summaries)   | Movies   |
 
-| Endpoint                       | Provider Name                          | Use For  |
-|--------------------------------|----------------------------------------|----------|
-| `http://localhost:5100/movies` | VPRO Cinema (Dutch Summaries) - Movies | Movies   |
-| `http://localhost:5100/series` | VPRO Cinema (Dutch Summaries) - Series | TV Shows |
-
-### Register the providers
+### Register the provider
 
 1. In Plex, go to **Settings** → **Metadata Agents** → **Metadata Providers**
 2. Click **+ Add Provider**, paste `http://localhost:5100/movies`, save
-3. Click **+ Add Provider**, paste `http://localhost:5100/series`, save
 
 <img width="1017" height="475" alt="image" src="https://github.com/user-attachments/assets/a0b4fbd4-ef0f-4ad7-a12b-15b724fa7faa" />
 
-### Create the agents
+### Create the agent
 
 **Movie Agent:**
 
 1. Under **Metadata Agents**, click **+ Add Agent**
 2. Title: "VPRO + Plex Movie"
-3. Primary provider: `VPRO Cinema (Dutch Summaries) - Movies`
+3. Primary provider: `VPRO Cinema (Dutch Summaries)`
 4. Add "Plex Movie" as additional provider (click **+**)
 5. Optionally add "Plex Local Media"
 6. Save
 
 <img width="485" height="658" alt="image" src="https://github.com/user-attachments/assets/06040d4c-2d8a-41a2-95a1-1ac9a9aa25c4" />
 
-**TV Show Agent:**
-
-1. Click **+ Add Agent** again
-2. Title: "VPRO + Plex Series"
-3. Primary provider: `VPRO Cinema (Dutch Summaries) - Series`
-4. Add "Plex Series" as additional provider
-5. Optionally add "Plex Local Media"
-6. Save
-
-<img width="486" height="633" alt="image" src="https://github.com/user-attachments/assets/2e3e64b7-b946-4ac2-92f5-ad327b6abb56" />
-
 ### Configure your libraries
 
 1. **Settings** → **Manage Libraries** → click `...` next to library → **Edit Library**
 2. **Advanced** tab → **Agent** → select your new agent
-3. Save and repeat for other libraries
+3. Save and repeat for other movie libraries
 
 ### Refresh metadata
 
@@ -193,9 +180,6 @@ When configured as a Metadata Provider alongside Plex Movie (see [Plex Configura
 # Basic search
 docker exec vpro-plex-provider python vpro_lookup.py "Apocalypse Now" --year 1979
 
-# Filter by type
-docker exec vpro-plex-provider python vpro_lookup.py "Adolescence" --year 2025 --type series
-
 # With IMDB ID + verbose output
 docker exec vpro-plex-provider python vpro_lookup.py "Downfall" --year 2004 --imdb tt0363163 -v
 
@@ -207,17 +191,17 @@ docker exec vpro-plex-provider python vpro_lookup.py "Der Untergang" --year 2004
 
 ```bash
 # Test search
-curl "http://localhost:5100/test?title=Le+dernier+métro&year=1980&type=film"
+curl "http://localhost:5100/test?title=Le+dernier+métro&year=1980"
 
 # Test cinema.nl fallback directly (bypass POMS API)
 curl "http://localhost:5100/test?title=Der+Untergang&year=2004&skip_poms=1"
 
 # Plex metadata endpoint
-curl "http://localhost:5100/library/metadata/vpro-apocalypse-now-1979-tt0078788-m"
+curl "http://localhost:5100/movies/library/metadata/vpro-apocalypse-now-1979-tt0078788-m"
 
 # Cache operations
 curl "http://localhost:5100/cache"
-curl "http://localhost:5100/cache?key=vpro-apocalypse-now-1979-tt0078788"
+curl "http://localhost:5100/cache?key=vpro-apocalypse-now-1979-tt0078788-m"
 curl -X POST "http://localhost:5100/cache/clear"
 curl -X POST "http://localhost:5100/cache/delete?key=vpro-apocalypse-now-1979-tt0078788-m"
 curl -X POST "http://localhost:5100/cache/delete?pattern=apocalypse"
@@ -256,25 +240,20 @@ docker-compose logs -f
 
 ## API Reference
 
-| Endpoint                                | Method | Description                                    |
-|-----------------------------------------|--------|------------------------------------------------|
-| `/movies`                               | GET    | Movie provider info (type 1)                   |
-| `/movies/library/metadata/<key>`        | GET    | Plex metadata lookup for movies                |
-| `/movies/library/metadata/matches`      | POST   | Plex match endpoint for movies                 |
-| `/movies/library/metadata/<key>/images` | GET    | Returns empty (no artwork)                     |
-| `/movies/library/metadata/<key>/extras` | GET    | Returns empty (no extras)                      |
-| `/series`                               | GET    | TV provider info (types 2, 3, 4)               |
-| `/series/library/metadata/<key>`        | GET    | Plex metadata lookup for TV shows              |
-| `/series/library/metadata/matches`      | POST   | Plex match endpoint for TV shows               |
-| `/series/library/metadata/<key>/images` | GET    | Returns empty (no artwork)                     |
-| `/series/library/metadata/<key>/extras` | GET    | Returns empty (no extras)                      |
-| `/health`                               | GET    | Simple health check (version only)             |
+| Endpoint                                | Method | Description                                      |
+|-----------------------------------------|--------|--------------------------------------------------|
+| `/movies`                               | GET    | Movie provider info (type 1)                     |
+| `/movies/library/metadata/<key>`        | GET    | Plex metadata lookup for movies                  |
+| `/movies/library/metadata/matches`      | POST   | Plex match endpoint for movies                   |
+| `/movies/library/metadata/<key>/images` | GET    | Returns VPRO images if enabled, otherwise empty  |
+| `/movies/library/metadata/<key>/extras` | GET    | Returns empty (no extras)                        |
+| `/health`                               | GET    | Simple health check (version only)               |
 | `/health/ready`                         | GET    | Detailed health with checks, cache stats, config |
-| `/health/live`                          | GET    | Liveness probe (always returns ok)             |
-| `/test`                                 | GET    | Test search: `?title=X&year=Y&imdb=ttZ&type=T&skip_poms=1&skip_tmdb=1` |
-| `/cache`                                | GET    | List cached entries or view specific: `?key=X` |
+| `/health/live`                          | GET    | Liveness probe (always returns ok)               |
+| `/test`                                 | GET    | Test search: `?title=X&year=Y&imdb=ttZ&skip_poms=1&skip_tmdb=1` |
+| `/cache`                                | GET    | List cached entries or view specific: `?key=X`   |
 | `/cache/clear`                          | POST   | Clear all cached entries (preserves credentials) |
-| `/cache/delete`                         | POST   | Delete specific entries: `?key=X` or `?pattern=X` |
+| `/cache/delete`                         | POST   | Delete specific entries: `?key=X` or `?pattern=X`|
 
 ## File Structure
 
@@ -337,6 +316,16 @@ Cache and `.env` are preserved during updates.
 <details>
 <summary><strong>Upgrade notes for specific versions</strong></summary>
 
+### v4.0.0 — TV series support removed (breaking change)
+
+TV series support has been removed. Only movies are now supported.
+
+**Migration:**
+1. Remove the series provider from Plex (`http://localhost:5100/series`)
+2. Remove any TV Show agents that used VPRO as primary provider
+3. For TV libraries, switch to standard Plex Series agent
+4. Clear cache: `curl -X POST "http://localhost:5100/cache/clear"`
+
 ### v3.1.0 — Breaking URL changes
 
 | Old                        | New                            |
@@ -357,6 +346,18 @@ Single provider → two providers (`/movies` and `/series`). Required by Plex AP
 </details>
 
 ## Changelog
+
+### v4.0.0 — Movies only (breaking change)
+- **⚠️ TV series support removed** — VPRO's data sources don't provide complete series metadata (seasons, episodes, episode descriptions), which caused Plex scanning failures. This provider now only supports movies.
+- **TMDB fallback metadata** — When a movie isn't found in VPRO sources, the provider now returns basic metadata from TMDB (title, year, IMDB ID) so Plex can still add the movie. The description is omitted to let secondary providers (Plex Movie) fill it in.
+- **Reduced not-found cache TTL** — Changed from 7 days to 1 hour to allow quicker retries for newly indexed content
+- **Simplified API** — Removed `/series` endpoint and all TV-related routes
+
+**Migration from v3.x:**
+1. Remove the series provider from Plex (`http://localhost:5100/series`)
+2. Remove any TV Show agents that used VPRO as primary provider
+3. For TV libraries, switch to standard Plex Series agent
+4. Clear cache: `curl -X POST "http://localhost:5100/cache/clear"`
 
 ### v3.4.0
 - **Cinema.nl direct scraper** — Replaced DuckDuckGo/Startpage web search with direct cinema.nl scraping
@@ -388,12 +389,13 @@ Single provider → two providers (`/movies` and `/series`). Required by Plex AP
 
 ### v3.0.0
 - Two-provider architecture for proper Plex secondary agent combining
-- Added series/TV show support
+- Added series/TV show support (removed in v4.0.0)
 
 ## Limitations
 
+- **Movies only** — TV series support was removed in v4.0.0 because VPRO's data sources don't provide complete series metadata
 - **POMS API is undocumented** — Not officially supported by NPO; may change without notice
-- **Not all content covered** — Only films/series reviewed by VPRO Cinema
+- **Not all content covered** — Only films reviewed by VPRO Cinema; movies not found get basic TMDB fallback metadata
 - **Artwork optional** — Disabled by default; enable `VPRO_RETURN_IMAGES` or use Plex Movie fallback
 - **Ratings display limited** — Plex's Custom Metadata Provider API may store `audienceRating` values, but the rating *icon* displayed in the UI is controlled by the library's "Ratings Source" setting (Rotten Tomatoes, IMDb, or TMDb), not by the provider. Custom `ratingImage` URI schemes are not supported. This is a Plex architectural limitation — see the [Plex Dev/API Forum](https://forums.plex.tv/c/dev-api-corner/) for updates
 - **Credential refresh broken** — vprogids.nl/cinema has migrated to cinema.nl; auto-refresh no longer works but default credentials still function
