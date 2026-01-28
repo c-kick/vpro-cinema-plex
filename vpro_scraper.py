@@ -720,6 +720,14 @@ def search_cinema_fallback(
                     if not film or not film.description:
                         continue
 
+                    # Skip if media type doesn't match (when filtering)
+                    if media_type != "all" and film.media_type != media_type:
+                        logger.debug(
+                            f"Cinema.nl: Skipping '{film.title}' - type mismatch "
+                            f"(wanted {media_type}, got {film.media_type})"
+                        )
+                        continue
+
                     # Check for match
                     match_type = _check_match(
                         film, title, year, imdb_id, alt_titles
