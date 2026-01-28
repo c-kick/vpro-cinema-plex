@@ -334,7 +334,21 @@ def is_valid_description(description: str, min_length: int = 50) -> bool:
         '404 not found',
     ]
 
-    all_patterns = invalid_patterns_nl + invalid_patterns_en
+    # Patterns indicating entire page was scraped instead of just description
+    # These are navigation, footer, or boilerplate text from cinema.nl/vprogids.nl
+    page_boilerplate_patterns = [
+        'ga naar de inhoud',  # Skip to content link
+        'menuzoeken op trefwoord',  # Navigation menu
+        'vpro cinema extra toont de bijzondere wereld',  # Site tagline
+        'de grootste, meest complete nederlandstalige website',  # Footer text
+        'cookiesprivacy',  # Footer links (merged without spaces)
+        'publicspaces manifest',  # Footer text
+        'de vpro cinema website is vernieuwd',  # Site update notice
+        'volg ons via',  # Footer social links (when repeated)
+        'duik snel in',  # Navigation menu
+    ]
+
+    all_patterns = invalid_patterns_nl + invalid_patterns_en + page_boilerplate_patterns
 
     for pattern in all_patterns:
         if pattern in desc_lower:

@@ -564,7 +564,8 @@ class POMSAPIClient(SessionAwareComponent):
                 logger.warning(f"POMS: Invalid API description for '{result.get('title', 'unknown')}' (len={len(raw_desc)})")
 
         # If no valid description from API but we have a URL, try scraping the page directly
-        if not description and url:
+        # Only scrape cinema.nl URLs - vprogids.nl has different structure and returns garbage
+        if not description and url and 'cinema.nl' in url:
             logger.info(f"POMS: Scraping page for '{result.get('title', 'unknown')}' - {url}")
             try:
                 scraper = VPROPageScraper(session=self.session)
@@ -576,6 +577,8 @@ class POMSAPIClient(SessionAwareComponent):
                     logger.debug(f"POMS: Page scrape returned no description for '{url}'")
             except Exception as e:
                 logger.warning(f"POMS: Page scrape failed for '{url}': {e}")
+        elif not description and url and 'vprogids.nl' in url:
+            logger.debug(f"POMS: Skipping vprogids.nl scrape (site structure changed) - {url}")
 
         vpro_id = None
 
