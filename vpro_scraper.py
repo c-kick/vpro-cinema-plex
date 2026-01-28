@@ -4,6 +4,8 @@ VPRO Cinema Web Scraper
 Direct cinema.nl scraper for finding VPRO Cinema pages when the POMS API
 doesn't return results. Searches cinema.nl directly with IMDB verification.
 
+NOTE: This module only supports MOVIES. TV series support has been removed.
+
 Note: vprogids.nl/cinema has migrated to cinema.nl.
 """
 
@@ -664,11 +666,12 @@ def search_cinema_fallback(
     year: Optional[int] = None,
     imdb_id: Optional[str] = None,
     alt_titles: List[str] = None,
-    media_type: str = "all",
     session: RateLimitedSession = None,
 ) -> Optional[VPROFilm]:
     """
     Search cinema.nl with IMDB verification.
+
+    NOTE: Only movies are supported. TV series are skipped.
 
     Strategy:
     1. Search with "{title} {year}" for best ranking
@@ -681,7 +684,6 @@ def search_cinema_fallback(
         year: Optional release year
         imdb_id: Optional IMDB ID for verification
         alt_titles: Optional list of alternate titles to try
-        media_type: "film", "series", or "all"
         session: Optional shared session
 
     Returns:
@@ -720,11 +722,10 @@ def search_cinema_fallback(
                     if not film or not film.description:
                         continue
 
-                    # Skip if media type doesn't match (when filtering)
-                    if media_type != "all" and film.media_type != media_type:
+                    # Skip series (only movies supported)
+                    if film.media_type != "film":
                         logger.debug(
-                            f"Cinema.nl: Skipping '{film.title}' - type mismatch "
-                            f"(wanted {media_type}, got {film.media_type})"
+                            f"Cinema.nl: Skipping '{film.title}' - series detected"
                         )
                         continue
 

@@ -53,7 +53,7 @@ class TMDBClient(SessionAwareComponent):
     """
     Client for TMDB API to fetch alternate titles.
 
-    Supports both movies and TV series lookup.
+    Note: This client only supports movies. TV series support has been removed.
     """
 
     def __init__(self, api_key: str = None, session: RateLimitedSession = None):
@@ -67,28 +67,10 @@ class TMDBClient(SessionAwareComponent):
         self.api_key = api_key or TMDB_API_KEY
         self.init_session(session, timeout=10)
 
-    # Media type configuration for TMDB API endpoints
-    MEDIA_TYPE_CONFIG = {
-        "film": {
-            "endpoint": "movie",
-            "original_title_key": "original_title",
-            "alt_results_key": "titles",
-        },
-        "series": {
-            "endpoint": "tv",
-            "original_title_key": "original_name",
-            "alt_results_key": "results",
-        },
-    }
-
     # Preferred countries for alternate titles (relevant for VPRO/Dutch searches)
     PREFERRED_COUNTRIES = ["FR", "NL", "BE", "DE"]
 
-    def _build_prioritized_titles(
-        self,
-        tmdb_id: int,
-        media_type: str,
-    ) -> List[str]:
+    def _build_prioritized_titles(self, tmdb_id: int) -> List[str]:
         """
         Build prioritized title list from TMDB with deduplication.
 
@@ -98,26 +80,22 @@ class TMDBClient(SessionAwareComponent):
         3. All other alternate titles
 
         Args:
-            tmdb_id: TMDB ID of the content
-            media_type: "film" or "series"
+            tmdb_id: TMDB ID of the movie
 
         Returns:
             List of unique titles in priority order
         """
-        config = self.MEDIA_TYPE_CONFIG.get(media_type, self.MEDIA_TYPE_CONFIG["film"])
-        endpoint = config["endpoint"]
-
-        details = self._get(f"/{endpoint}/{tmdb_id}")
-        alt_data = self._get(f"/{endpoint}/{tmdb_id}/alternative_titles")
+        details = self._get(f"/movie/{tmdb_id}")
+        alt_data = self._get(f"/movie/{tmdb_id}/alternative_titles")
 
         titles, add_title = build_unique_list(str.lower)
 
         # Priority 1: Original title
         if details:
-            add_title(details.get(config["original_title_key"]))
+            add_title(details.get("original_title"))
 
         # Priority 2: Preferred country titles
-        alt_titles = alt_data.get(config["alt_results_key"], []) if alt_data else []
+        alt_titles = alt_data.get("titles", []) if alt_data else []
         for country in self.PREFERRED_COUNTRIES:
             for t in alt_titles:
                 if t.get("iso_3166_1") == country:
@@ -146,28 +124,24 @@ class TMDBClient(SessionAwareComponent):
             logger.warning(f"TMDB API error: {e}")
             return None
 
-    def find_by_imdb(self, imdb_id: str, media_type: str = "all") -> tuple[Optional[int], str]:
+    def find_by_imdb(self, imdb_id: str, media_type: str = "film") -> tuple[Optional[int], str]:
         """
         Find TMDB ID from IMDB ID.
 
         Args:
             imdb_id: The IMDB ID to look up
-            media_type: "film", "series", or "all" (checks both)
+            media_type: Ignored (kept for backward compatibility). Only movies are supported.
 
         Returns:
-            Tuple of (tmdb_id, detected_media_type)
+            Tuple of (tmdb_id, "film")
         """
         data = self._get(f"/find/{imdb_id}", {"external_source": "imdb_id"})
         if not data:
             return None, "film"
 
-        # Check movies first (unless specifically looking for series)
-        if media_type in ("film", "all") and data.get("movie_results"):
+        # Only check movies (TV series support removed)
+        if data.get("movie_results"):
             return data["movie_results"][0].get("id"), "film"
-
-        # Check TV series
-        if media_type in ("series", "all") and data.get("tv_results"):
-            return data["tv_results"][0].get("id"), "series"
 
         return None, "film"
 
@@ -175,7 +149,7 @@ class TMDBClient(SessionAwareComponent):
         self,
         title: str,
         year: Optional[int] = None,
-        media_type: str = "all"
+        media_type: str = "film"
     ) -> tuple[Optional[str], List[str]]:
         """
         Search TMDB by title and year to find IMDB ID and alternate titles.
@@ -186,7 +160,7 @@ class TMDBClient(SessionAwareComponent):
         Args:
             title: Title to search for
             year: Optional release year
-            media_type: "film", "series", or "all"
+            media_type: Ignored (kept for backward compatibility). Only movies are supported.
 
         Returns:
             Tuple of (imdb_id, list of alternate titles including original)
@@ -196,80 +170,53 @@ class TMDBClient(SessionAwareComponent):
 
         imdb_id = None
         tmdb_id = None
-        detected_type = "film"
         titles = []
 
-        # Search movies
-        if media_type in ("film", "all"):
-            params = {"query": title}
-            if year:
-                params["year"] = year
-            data = self._get("/search/movie", params)
-            if data and data.get("results"):
-                # Find best match (prefer exact year match)
-                for result in data["results"]:
-                    release_year = None
-                    if result.get("release_date"):
-                        try:
-                            release_year = int(result["release_date"][:4])
-                        except (ValueError, IndexError):
-                            pass
-                    if year and release_year == year:
-                        tmdb_id = result.get("id")
-                        detected_type = "film"
-                        break
-                if not tmdb_id and data["results"]:
-                    tmdb_id = data["results"][0].get("id")
-                    detected_type = "film"
-
-        # Search TV if no movie found or specifically looking for series
-        if not tmdb_id and media_type in ("series", "all"):
-            params = {"query": title}
-            if year:
-                params["first_air_date_year"] = year
-            data = self._get("/search/tv", params)
-            if data and data.get("results"):
-                for result in data["results"]:
-                    air_year = None
-                    if result.get("first_air_date"):
-                        try:
-                            air_year = int(result["first_air_date"][:4])
-                        except (ValueError, IndexError):
-                            pass
-                    if year and air_year == year:
-                        tmdb_id = result.get("id")
-                        detected_type = "series"
-                        break
-                if not tmdb_id and data["results"]:
-                    tmdb_id = data["results"][0].get("id")
-                    detected_type = "series"
+        # Search movies only (TV series support removed)
+        params = {"query": title}
+        if year:
+            params["year"] = year
+        data = self._get("/search/movie", params)
+        if data and data.get("results"):
+            # Find best match (prefer exact year match)
+            for result in data["results"]:
+                release_year = None
+                if result.get("release_date"):
+                    try:
+                        release_year = int(result["release_date"][:4])
+                    except (ValueError, IndexError):
+                        pass
+                if year and release_year == year:
+                    tmdb_id = result.get("id")
+                    break
+            if not tmdb_id and data["results"]:
+                tmdb_id = data["results"][0].get("id")
 
         if not tmdb_id:
             return None, []
 
         # Get external IDs (IMDB)
-        config = self.MEDIA_TYPE_CONFIG.get(detected_type, self.MEDIA_TYPE_CONFIG["film"])
-        ext_data = self._get(f"/{config['endpoint']}/{tmdb_id}/external_ids")
+        ext_data = self._get(f"/movie/{tmdb_id}/external_ids")
         if ext_data:
             imdb_id = ext_data.get("imdb_id")
 
-        # Get prioritized titles using shared helper
-        titles = self._build_prioritized_titles(tmdb_id, detected_type)
+        # Get prioritized titles
+        titles = self._build_prioritized_titles(tmdb_id)
 
         if titles:
             logger.info(f"TMDB search '{title}' ({year}): imdb={imdb_id}, titles={titles[:3]}...")
 
         return imdb_id, titles
 
-    def get_alternate_titles(self, imdb_id: str, media_type: str = "all") -> List[str]:
+    def get_alternate_titles(self, imdb_id: str, media_type: str = "film") -> List[str]:
         """
-        Get alternate titles for a movie or TV series by IMDB ID.
+        Get alternate titles for a movie by IMDB ID.
 
         Prioritizes French, Dutch, Belgian, and German titles for VPRO searches.
 
         Args:
             imdb_id: The IMDB ID to look up
-            media_type: "film", "series", or "all" (auto-detect)
+            media_type: Ignored (kept for backward compatibility). Only movies are supported.
 
         Returns:
             List of alternate titles, prioritized by relevance
@@ -278,16 +225,16 @@ class TMDBClient(SessionAwareComponent):
             logger.debug("TMDB API key not configured, skipping alternate titles")
             return []
 
-        tmdb_id, detected_type = self.find_by_imdb(imdb_id, media_type)
+        tmdb_id, _ = self.find_by_imdb(imdb_id)
         if not tmdb_id:
             logger.debug(f"Could not find TMDB ID for {imdb_id}")
             return []
 
-        # Use shared helper for prioritized title building
-        titles = self._build_prioritized_titles(tmdb_id, detected_type)
+        # Get prioritized titles for movie
+        titles = self._build_prioritized_titles(tmdb_id)
 
         logger.info(
-            f"TMDB alternate titles for {imdb_id} [{detected_type}]: "
+            f"TMDB alternate titles for {imdb_id}: "
             f"{titles[:5]}{'...' if len(titles) > 5 else ''}"
         )
         return titles
@@ -393,15 +340,18 @@ class POMSAPIClient(SessionAwareComponent):
         self,
         query: str,
         max_results: int,
-        media_type: str = "all"
+        media_type: str = "film"
     ) -> tuple:
         """
         Execute search request.
 
+        Note: Only movies are supported. The media_type parameter is kept for
+        backward compatibility but always filters for MOVIE type.
+
         Args:
             query: Search query string
             max_results: Maximum number of results
-            media_type: "film", "series", or "all"
+            media_type: Ignored (kept for backward compatibility)
 
         Returns:
             Tuple of (response, path, params) for potential retry
@@ -412,13 +362,9 @@ class POMSAPIClient(SessionAwareComponent):
         body = {
             "highlight": True,
             "searches": {"text": query},
+            # Always filter for movies only (TV series support removed)
+            "facets": {"types": {"include": "MOVIE"}},
         }
-
-        # Add facet filter only when searching for a specific type
-        if media_type == "film":
-            body["facets"] = {"types": {"include": "MOVIE"}}
-        elif media_type == "series":
-            body["facets"] = {"types": {"include": "SERIES"}}
 
         headers = self._get_headers(path, params)
         url = f"{POMS_API_BASE}/{path}?{urlencode(params)}"
@@ -487,11 +433,13 @@ class POMSAPIClient(SessionAwareComponent):
         """
         Parse API response item into VPROFilm object.
 
+        Note: Only movies are supported. Series items are skipped.
+
         Args:
             item: Raw API response item
 
         Returns:
-            VPROFilm if parseable, None otherwise
+            VPROFilm if parseable movie, None otherwise
         """
         # Import here to avoid circular import at module level
         from vpro_scraper import VPROPageScraper
@@ -499,11 +447,8 @@ class POMSAPIClient(SessionAwareComponent):
         result = item.get("result", {})
 
         item_type = result.get("type")
-        if item_type == "MOVIE":
-            media_type = "film"
-        elif item_type == "SERIES":
-            media_type = "series"
-        else:
+        if item_type != "MOVIE":
+            # Skip series and other types (TV series support removed)
             return None
 
         year = None
@@ -599,7 +544,7 @@ class POMSAPIClient(SessionAwareComponent):
             vpro_rating=vpro_rating,
             content_rating=content_rating,
             images=images,
-            media_type=media_type,
+            media_type="film",
         )
 
     # Backward compatibility alias
@@ -614,18 +559,21 @@ def search_poms_api(
     title: str,
     year: Optional[int] = None,
     director: Optional[str] = None,
-    media_type: str = "all",
+    media_type: str = "film",
     session: RateLimitedSession = None,
     imdb_id: Optional[str] = None,
 ) -> Optional[VPROFilm]:
     """
     Search VPRO using POMS API only.
 
+    Note: Only movies are supported. The media_type parameter is kept for
+    backward compatibility but is ignored (always searches for movies).
+
     Args:
         title: Title to search for
         year: Optional release year for validation
         director: Optional director for disambiguation
-        media_type: "film", "series", or "all"
+        media_type: Ignored (kept for backward compatibility)
         session: Optional shared session
         imdb_id: Optional IMDB ID - when provided, requires stricter matching
                  (disables fuzzy "top result" fallback)
@@ -636,7 +584,8 @@ def search_poms_api(
     poms = POMSAPIClient(session=session)
 
     try:
-        items = poms.search(title, max_results=10, media_type=media_type)
+        # Always search for movies only
+        items = poms.search(title, max_results=10, media_type="film")
 
         if not items:
             logger.debug(f"POMS: No results for '{title}'")
@@ -655,9 +604,6 @@ def search_poms_api(
         # Exact title + year match
         if year:
             for film in films:
-                # Skip if media type doesn't match (when filtering)
-                if media_type != "all" and film.media_type != media_type:
-                    continue
                 if film.year == year and titles_match(film.title, title):
                     logger.info(f"POMS: Exact match - {film.title} ({film.year})")
                     metrics.inc("poms_matches", labels={"type": "exact"})
@@ -665,9 +611,6 @@ def search_poms_api(
 
         # Title match with year validation
         for film in films:
-            # Skip if media type doesn't match (when filtering)
-            if media_type != "all" and film.media_type != media_type:
-                continue
             if titles_match(film.title, title):
                 if year and film.year and abs(film.year - year) > YEAR_TOLERANCE:
                     logger.debug(
@@ -692,13 +635,7 @@ def search_poms_api(
             similarity = title_similarity(title, best.title)
             year_diff = abs(best.year - year) if (best.year and year) else 0
 
-            # Check media type matches (when not searching for "all")
-            if media_type != "all" and best.media_type != media_type:
-                logger.debug(
-                    f"POMS: Rejecting '{best.title}' - type mismatch "
-                    f"(wanted {media_type}, got {best.media_type})"
-                )
-            elif year and year_diff > YEAR_TOLERANCE:
+            if year and year_diff > YEAR_TOLERANCE:
                 logger.debug(
                     f"POMS: Rejecting '{best.title}' ({best.year}) - year diff {year_diff}"
                 )
@@ -720,7 +657,7 @@ def search_poms_api(
 def search_poms_multiple(
     title: str,
     year: Optional[int] = None,
-    media_type: str = "all",
+    media_type: str = "film",
     max_results: int = 10,
     session: RateLimitedSession = None,
 ) -> List[VPROFilm]:
@@ -730,6 +667,9 @@ def search_poms_multiple(
     Unlike search_poms_api() which returns only the best match,
     this returns all valid matches with descriptions for user selection.
 
+    Note: Only movies are supported. The media_type parameter is kept for
+    backward compatibility but is ignored (always searches for movies).
+
     Search strategy:
     1. Search POMS API for matches
     2. Search cinema.nl for additional matches (fallback)
@@ -738,7 +678,7 @@ def search_poms_multiple(
     Args:
         title: Title to search for
         year: Optional year (used for cinema.nl search ranking)
-        media_type: "film", "series", or "all"
+        media_type: Ignored (kept for backward compatibility)
         max_results: Maximum number of results to return (default 10)
         session: Optional shared session
 
@@ -752,9 +692,9 @@ def search_poms_multiple(
     films = []
     seen_vpro_ids = set()
 
-    # Step 1: Search POMS API
+    # Step 1: Search POMS API (movies only)
     try:
-        items = poms.search(title, max_results=max_results, media_type=media_type)
+        items = poms.search(title, max_results=max_results, media_type="film")
 
         if items:
             logger.debug(f"POMS multiple: {len(items)} results for '{title}'")
@@ -762,10 +702,6 @@ def search_poms_multiple(
             for item in items:
                 film = poms.parse_item(item)
                 if not film or not film.description:
-                    continue
-
-                # Skip if media type doesn't match (when filtering)
-                if media_type != "all" and film.media_type != media_type:
                     continue
 
                 # Deduplicate by VPRO ID
@@ -810,8 +746,8 @@ def search_poms_multiple(
                 if not film or not film.description:
                     continue
 
-                # Skip if media type doesn't match (when filtering)
-                if media_type != "all" and film.media_type != media_type:
+                # Only include movies (skip series)
+                if film.media_type != "film":
                     continue
 
                 # Add to results
