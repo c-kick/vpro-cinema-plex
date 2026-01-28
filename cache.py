@@ -49,6 +49,7 @@ class CacheEntry:
     Structured cache entry for metadata.
 
     All fields are explicitly typed for validation.
+    Note: media_type field is kept for backward compatibility but is always "film".
     """
     title: str
     year: Optional[int]
@@ -56,12 +57,12 @@ class CacheEntry:
     url: Optional[str]
     imdb_id: Optional[str]
     vpro_id: Optional[str]
-    media_type: str
+    media_type: str  # Always "film" (kept for backward compatibility)
     status: str  # CacheStatus value
     fetched_at: str = ""  # ISO format timestamp
     last_accessed: str = ""  # ISO format timestamp
     # Lookup diagnostics
-    lookup_method: Optional[str] = None  # "poms", "tmdb_alt", "web"
+    lookup_method: Optional[str] = None  # "poms", "tmdb_alt", "web", "tmdb_fallback"
     discovered_imdb: Optional[str] = None  # IMDB found via TMDB lookup
     # Content metadata
     content_rating: Optional[str] = None  # Kijkwijzer age rating (AL, 6, 9, 12, 14, 16, 18)
@@ -72,7 +73,7 @@ class CacheEntry:
         """
         Check if this cache entry has expired based on TTL.
 
-        Found entries have longer TTL (30 days) than not-found entries (7 days).
+        Found entries have longer TTL (30 days) than not-found entries (1 hour).
 
         Returns:
             True if entry has expired
@@ -188,18 +189,17 @@ class CacheEntry:
         title: str,
         year: Optional[int] = None,
         imdb_id: Optional[str] = None,
-        media_type: str = "film",
     ) -> "CacheEntry":
         """
         Create a NOT_FOUND cache entry.
 
         Factory method for caching negative lookup results.
+        Note: Not-found entries have a short TTL (1 hour) to allow quick retries.
 
         Args:
             title: Original search title
             year: Original search year
             imdb_id: Original search IMDB ID
-            media_type: "film" or "series"
 
         Returns:
             CacheEntry with NOT_FOUND status
@@ -211,7 +211,7 @@ class CacheEntry:
             url=None,
             imdb_id=imdb_id,
             vpro_id=None,
-            media_type=media_type,
+            media_type="film",
             status=CacheStatus.NOT_FOUND.value,
             fetched_at="",
             last_accessed="",
