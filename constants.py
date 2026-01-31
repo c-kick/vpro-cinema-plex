@@ -65,7 +65,7 @@ class CacheStatus(str, Enum):
 
 PROVIDER_IDENTIFIER: Final = "tv.plex.agents.custom.vpro.cinema"
 PROVIDER_TITLE: Final = "VPRO Cinema (Dutch Summaries)"
-PROVIDER_VERSION: Final = "4.0.1"  # Fix missing title/year in metadata response
+PROVIDER_VERSION: Final = "4.0.2"  # Fix external subtitle detection (add LMA Source)
 
 
 # =============================================================================

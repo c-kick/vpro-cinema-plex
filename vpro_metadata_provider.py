@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-VPRO Cinema Plex Metadata Provider v4.0.0
+VPRO Cinema Plex Metadata Provider v4.0.2
 
 A custom Plex metadata provider that fetches Dutch film descriptions
 from VPRO Cinema.
@@ -923,7 +923,16 @@ def cache_delete():
 
 @app.route('/movies', methods=['GET'])
 def provider_root():
-    """Return provider information for MOVIES."""
+    """
+    Return provider information for MOVIES.
+
+    The MediaProvider response declares the agent's capabilities to Plex.
+    The Source array is critical for enabling Local Media Assets (LMA) detection,
+    which handles external subtitle files (.srt, .ass, .sub), local artwork, and
+    embedded metadata. Without this declaration, Plex won't scan for sidecar files.
+
+    See: https://forums.plex.tv/t/announcement-custom-metadata-providers/934384
+    """
     return jsonify({
         "MediaProvider": {
             "identifier": PROVIDER_IDENTIFIER,
@@ -935,6 +944,17 @@ def provider_root():
             "Feature": [
                 {"type": "metadata", "key": "/library/metadata"},
                 {"type": "match", "key": "/library/metadata/matches"}
+            ],
+            # Source array declares additional providers to run alongside this agent.
+            # This enables Local Media Assets to scan for external subtitle files,
+            # local artwork (poster.jpg, fanart.jpg), and embedded metadata.
+            # Without this, Plex won't detect sidecar files like .nl.srt or .en.srt.
+            "Source": [
+                {
+                    "identifier": "com.plexapp.agents.localmedia",
+                    "enabled": True,
+                    "name": "Local Media Assets (Movies)"
+                }
             ]
         }
     })
