@@ -306,7 +306,12 @@ def _build_metadata_response(
         "key": f"{req.base_path}/library/metadata/{req.rating_key}",
         "guid": f"{req.identifier}://{plex_type}/{req.rating_key}",
         "type": plex_type,
+        "title": entry.title,
     }
+
+    # Include year if available
+    if entry.year:
+        metadata["year"] = int(entry.year)
 
     # Only include summary if enabled and we have a description
     if VPRO_RETURN_SUMMARY and entry.description:
