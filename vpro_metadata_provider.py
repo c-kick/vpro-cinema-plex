@@ -1115,6 +1115,74 @@ def metrics_endpoint():
 
 
 # =============================================================================
+# Error Handlers
+# =============================================================================
+
+@app.errorhandler(404)
+def not_found_error(error):
+    """
+    Return JSON 404 response instead of HTML.
+
+    Plex expects JSON responses from custom metadata providers. Without this handler,
+    Flask returns HTML for 404 errors, causing Plex to fail with "syntax error at 1:1"
+    when it tries to parse the HTML as JSON.
+    """
+    return jsonify({
+        "MediaContainer": {
+            "offset": 0,
+            "totalSize": 0,
+            "identifier": PROVIDER_IDENTIFIER,
+            "size": 0,
+            "Metadata": []
+        }
+    }), 404
+
+
+@app.errorhandler(500)
+def internal_error(error):
+    """Return JSON 500 response instead of HTML."""
+    logger.error(f"Internal server error: {error}")
+    return jsonify({
+        "MediaContainer": {
+            "offset": 0,
+            "totalSize": 0,
+            "identifier": PROVIDER_IDENTIFIER,
+            "size": 0,
+            "Metadata": []
+        },
+        "error": "Internal server error"
+    }), 500
+
+
+# =============================================================================
+# TV/Shows Stubs (This provider only supports movies)
+# =============================================================================
+
+@app.route('/tv', methods=['GET'])
+@app.route('/tv/<path:subpath>', methods=['GET', 'POST'])
+@app.route('/shows', methods=['GET'])
+@app.route('/shows/<path:subpath>', methods=['GET', 'POST'])
+def tv_not_supported(subpath=None):
+    """
+    Return empty response for TV/Shows requests.
+
+    This provider only supports movies. Plex may still call TV endpoints for
+    libraries configured with this agent. Return a valid empty MediaContainer
+    to prevent "syntax error" parsing failures.
+    """
+    logger.debug(f"TV/Shows endpoint called (not supported): {request.path}")
+    return jsonify({
+        "MediaContainer": {
+            "offset": 0,
+            "totalSize": 0,
+            "identifier": PROVIDER_IDENTIFIER,
+            "size": 0,
+            "Metadata": []
+        }
+    })
+
+
+# =============================================================================
 # Main
 # =============================================================================
 
