@@ -235,7 +235,7 @@ docker-compose logs -f
 | `POMS_CACHE_FILE`           | ./credentials.json | Path to cached POMS credentials                             |
 | `VPRO_RETURN_SUMMARY`       | true               | Return VPRO Dutch summary/description                       |
 | `VPRO_RETURN_CONTENT_RATING`| true               | Return Kijkwijzer content rating (AL, 6, 9, 12, 14, 16, 18) |
-| `VPRO_RETURN_IMAGES`        | false              | Return VPRO images (may override secondary agent)           |
+| `VPRO_RETURN_IMAGES`        | false              | Return VPRO images (recommended for Dutch films — better poster coverage than TMDB) |
 | `VPRO_RETURN_RATING`        | false              | Return VPRO rating (experimental, see [Limitations](#limitations)) |
 
 ## API Reference
@@ -346,6 +346,16 @@ Single provider → two providers (`/movies` and `/series`). Required by Plex AP
 </details>
 
 ## Changelog
+
+### v4.1.0 — Improved poster and image handling
+
+- **Poster extraction from Cinema.nl** — Now extracts the main movie poster from the top of Cinema.nl pages (marked as PROMO_PORTRAIT), in addition to stills from the Afbeeldingen section. Uses alt-text matching and URL heuristics to identify posters reliably.
+- **Fixed dead vprogids.nl image URLs** — POMS API returns old vprogids.nl URLs that now return HTTP 410 Gone. The provider now converts these to cinema.nl URLs and scrapes for fresh images.vpro.nl URLs.
+- **Proper image embedding in metadata** — Images are now embedded directly in the metadata response (thumb, art, Image array) per the Plex TMDB example, not just via the /images endpoint.
+- **Conditional images feature** — The provider only declares the "images" feature when `VPRO_RETURN_IMAGES=true`. When disabled, Plex correctly falls back to secondary agents (Plex Movie) for artwork.
+- **Rating array support** — VPRO ratings are now returned in the Rating array format with `cinemanl://image.rating` scheme. Note: Plex UI only displays ratings with recognized schemes (imdb://, rottentomatoes://), so the rating is stored but won't show an icon.
+- **WebP to JPEG conversion** — Image URLs are converted from .webp to .jpg for better Plex compatibility.
+- **Correct Plex image types** — Fixed image type mapping to use Plex's expected values (`coverPoster`, `background`) instead of incorrect ones (`poster`, `art`).
 
 ### v4.0.0 — Movies only (breaking change)
 - **⚠️ TV series support removed** — VPRO's data sources don't provide complete series metadata (seasons, episodes, episode descriptions), which caused Plex scanning failures. This provider now only supports movies.

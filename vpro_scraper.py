@@ -586,9 +586,10 @@ class VPROPageScraper(SessionAwareComponent):
         """
         Extract images from cinema.nl page.
 
-        Only extracts images from the ImageCluster div that follows
-        the <h2>Afbeeldingen</h2> heading to avoid unrelated images
-        from news articles etc.
+        Extracts:
+        1. The main poster image from the top of the page (marked as PROMO_PORTRAIT)
+        2. Still images from the ImageCluster div that follows the <h2>Afbeeldingen</h2>
+           heading (marked as PICTURE)
 
         Args:
             soup: Parsed page HTML
@@ -603,19 +604,113 @@ class VPROPageScraper(SessionAwareComponent):
         def add_image(url: str, img_type: str = "PICTURE", img_title: str = None):
             """Add image if not already seen."""
             if not url or url in seen_urls:
-                return
+                return False
             # Only accept vpro.nl images
             if 'vpro.nl' not in url:
-                return
+                return False
             seen_urls.add(url)
             images.append({
                 "type": img_type,
                 "url": url,
                 "title": img_title or title
             })
+            return True
 
-        # Find the "Afbeeldingen" heading and get the ImageCluster that follows it
+        def is_poster_url(url: str) -> bool:
+            """
+            Check if URL looks like a poster image (not a landscape still).
+
+            Poster URLs typically:
+            - Have width around 750px (w_750) without crop parameters
+            - Don't have landscape crop params (ex_, ey_, eh_, ew_)
+
+            Still/backdrop URLs typically:
+            - Have crop parameters for landscape crops
+            - Have larger widths (w_1920, w_1500, etc.)
+            """
+            if not url:
+                return False
+            # If URL has crop parameters, it's likely a landscape still
+            if re.search(r'[,/]e[xywh]_', url):
+                return False
+            # Poster-typical widths (500-800px range)
+            if re.search(r'/w_(5\d\d|6\d\d|7\d\d|800)/', url):
+                return True
+            # If no width param but is vpro.nl, could still be a poster
+            return True
+
+        def upgrade_image_url(url: str, target_width: int = 1920) -> str:
+            """Upgrade thumbnail URL to larger size and convert to JPEG for Plex compatibility."""
+            # Try comma-prefixed width first (e.g., ,w_160/)
+            upgraded = re.sub(r',w_\d+/', f',w_{target_width}/', url)
+            if upgraded != url:
+                # Convert webp to jpg for Plex compatibility
+                upgraded = re.sub(r'\.webp$', '.jpg', upgraded)
+                return upgraded
+            # Try slash-prefixed width (e.g., /w_160/)
+            upgraded = re.sub(r'/w_\d+/', f'/w_{target_width}/', url)
+            # Convert webp to jpg for Plex compatibility
+            upgraded = re.sub(r'\.webp$', '.jpg', upgraded)
+            return upgraded
+
+        # =====================================================================
+        # Step 1: Extract the main poster from the top of the page
+        # =====================================================================
+        # The poster is typically the first vpro.nl image before the
+        # "Afbeeldingen" section, often with "poster" in the alt text
+        # or a portrait-typical URL structure.
+
         afbeeldingen_heading = soup.find('h2', string=re.compile(r'Afbeeldingen', re.IGNORECASE))
+        poster_found = False
+
+        # Strategy A: Look for img with "poster" in alt text (most reliable)
+        for img in soup.find_all('img'):
+            alt = img.get('alt', '')
+            if 'poster' in alt.lower():
+                src = img.get('src') or img.get('data-src')
+                if src and 'vpro.nl' in src:
+                    # Upgrade to larger size for poster (1200px is good for posters)
+                    large_url = upgrade_image_url(src, 1200)
+                    if add_image(large_url, "PROMO_PORTRAIT", alt or f"{title} poster"):
+                        poster_found = True
+                        logger.debug(f"Found poster via alt text: {large_url}")
+                    break
+
+        # Strategy B: Find first vpro.nl image before Afbeeldingen section
+        # that looks like a poster URL
+        if not poster_found:
+            # Build set of images that appear after the Afbeeldingen heading
+            # to avoid expensive repeated position checks
+            imgs_after_heading = set()
+            if afbeeldingen_heading:
+                for elem in afbeeldingen_heading.find_all_next('img'):
+                    imgs_after_heading.add(id(elem))
+
+            for img in soup.find_all('img'):
+                # Stop if this image is in the Afbeeldingen section or after
+                if id(img) in imgs_after_heading:
+                    break
+
+                src = img.get('src') or img.get('data-src')
+                if src and 'vpro.nl' in src and is_poster_url(src):
+                    alt = img.get('alt', '')
+                    # Skip images that are clearly not posters (icons, logos, etc.)
+                    # by checking for minimum expected URL complexity
+                    if '/pfn_' in src or len(src) > 50:
+                        large_url = upgrade_image_url(src, 1200)
+                        if add_image(large_url, "PROMO_PORTRAIT", alt or f"{title} poster"):
+                            poster_found = True
+                            logger.debug(f"Found poster via URL heuristics: {large_url}")
+                        break
+
+        if poster_found:
+            logger.debug(f"Extracted poster image for '{title}'")
+        else:
+            logger.debug(f"No poster image found for '{title}'")
+
+        # =====================================================================
+        # Step 2: Extract stills from the Afbeeldingen section
+        # =====================================================================
         if afbeeldingen_heading:
             # Look for ImageCluster as next sibling or within next sibling
             next_elem = afbeeldingen_heading.find_next_sibling()
@@ -639,20 +734,16 @@ class VPROPageScraper(SessionAwareComponent):
                 # Cinema.nl uses simple src attributes with thumbnail URLs
                 # URL format: https://images.vpro.nl/{id}/ex_0,ey_77,eh_846,ew_1504,w_160/{filename}.webp
                 # We can request larger versions by changing w_160 to w_1920
+                stills_count = 0
                 for img in image_cluster.find_all('img'):
                     src = img.get('src') or img.get('data-src')
                     if src and 'vpro.nl' in src:
-                        # Upgrade thumbnail to larger size by replacing width param
-                        # w_160 -> w_1920 for full size
-                        large_url = re.sub(r',w_\d+/', ',w_1920/', src)
-                        if large_url == src:
-                            # No width param found, try different pattern
-                            large_url = re.sub(r'/w_\d+/', '/w_1920/', src)
-
+                        large_url = upgrade_image_url(src, 1920)
                         alt = img.get('alt', '')
-                        add_image(large_url, "PICTURE", alt if alt else title)
+                        if add_image(large_url, "PICTURE", alt if alt else title):
+                            stills_count += 1
 
-                logger.debug(f"Extracted {len(images)} images from Afbeeldingen section")
+                logger.debug(f"Extracted {stills_count} stills from Afbeeldingen section")
 
         return images[:10]  # Limit to 10 images
 

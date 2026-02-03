@@ -508,22 +508,41 @@ class POMSAPIClient(SessionAwareComponent):
             else:
                 logger.warning(f"POMS: Invalid API description for '{result.get('title', 'unknown')}' (len={len(raw_desc)})")
 
-        # If no valid description from API but we have a URL, try scraping the page directly
-        # Only scrape cinema.nl URLs - vprogids.nl has different structure and returns garbage
-        if not description and url and 'cinema.nl' in url:
-            logger.info(f"POMS: Scraping page for '{result.get('title', 'unknown')}' - {url}")
+        # Scrape cinema.nl page for description and images
+        # POMS API returns vprogids.nl image URLs which are now dead (410 Gone),
+        # so we prefer images from cinema.nl scraping (images.vpro.nl URLs work)
+        scrape_url = None
+        if url and 'cinema.nl' in url:
+            scrape_url = url
+        elif url and 'vprogids.nl' in url:
+            # Convert vprogids.nl URL to cinema.nl URL
+            # vprogids.nl: https://www.vprogids.nl/cinema/films/film~16092390~the-penguin-lessons~.html
+            # cinema.nl:   https://www.cinema.nl/db/16092390-the-penguin-lessons
+            match = re.search(r'(?:film|serie)~(\d+)~([^~]+)~', url)
+            if match:
+                vpro_id_from_url = match.group(1)
+                slug = match.group(2)
+                scrape_url = f"https://www.cinema.nl/db/{vpro_id_from_url}-{slug}"
+                logger.debug(f"POMS: Converted vprogids.nl URL to cinema.nl: {scrape_url}")
+
+        if scrape_url:
+            logger.info(f"POMS: Scraping cinema.nl for '{result.get('title', 'unknown')}' - {scrape_url}")
             try:
                 scraper = VPROPageScraper(session=self.session)
-                scraped = scraper.scrape(url)
-                if scraped and scraped.description:
-                    description = scraped.description
-                    logger.info(f"POMS: Page scrape successful for '{result.get('title', 'unknown')}'")
+                scraped = scraper.scrape(scrape_url)
+                if scraped:
+                    # Use scraped description if we don't have one from API
+                    if not description and scraped.description:
+                        description = scraped.description
+                        logger.info(f"POMS: Got description from page scrape for '{result.get('title', 'unknown')}'")
+                    # Always prefer scraped images (POMS API returns dead vprogids.nl URLs)
+                    if scraped.images:
+                        images = scraped.images
+                        logger.info(f"POMS: Got {len(images)} images from page scrape for '{result.get('title', 'unknown')}'")
                 else:
-                    logger.debug(f"POMS: Page scrape returned no description for '{url}'")
+                    logger.debug(f"POMS: Page scrape returned no data for '{scrape_url}'")
             except Exception as e:
-                logger.warning(f"POMS: Page scrape failed for '{url}': {e}")
-        elif not description and url and 'vprogids.nl' in url:
-            logger.debug(f"POMS: Skipping vprogids.nl scrape (site structure changed) - {url}")
+                logger.warning(f"POMS: Page scrape failed for '{scrape_url}': {e}")
 
         vpro_id = None
 
