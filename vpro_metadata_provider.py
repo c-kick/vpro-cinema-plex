@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-VPRO Cinema Plex Metadata Provider v4.0.2
+VPRO Cinema Plex Metadata Provider v4.1.0
 
 A custom Plex metadata provider that fetches Dutch film descriptions
 from VPRO Cinema.
@@ -8,6 +8,12 @@ from VPRO Cinema.
 NOTE: This provider only supports MOVIES. TV series support has been removed
 because VPRO's data sources don't provide complete series metadata (seasons,
 episodes, episode descriptions), which causes Plex scanning failures.
+
+Documentation:
+    Plex Custom Metadata Providers:
+    - Announcement: https://forums.plex.tv/t/announcement-custom-metadata-providers/934384
+    - API Docs: https://developer.plex.tv/pms/#section/API-Info/Metadata-Providers
+    - Example: https://github.com/plexinc/tmdb-example-provider
 
 Architecture:
     /library/metadata/matches (POST)
@@ -322,10 +328,50 @@ def _build_metadata_response(
         metadata["contentRating"] = f"nl/{entry.content_rating}"
 
     # Include VPRO rating if enabled and available
-    # NOTE: Plex may store this value but displays icons based on library settings,
-    # not custom providers. See README for details on this Plex limitation.
+    # NOTE: Plex only displays ratings with recognized schemes (imdb://, rottentomatoes://)
+    # Using cinemanl:// scheme - rating is stored but won't show icon in Plex UI (yet).
+    # If Plex adds custom scheme support in the future, this will be ready.
     if VPRO_RETURN_RATING and entry.vpro_rating:
-        metadata["audienceRating"] = float(entry.vpro_rating)
+        rating_value = float(entry.vpro_rating)
+        metadata["audienceRating"] = rating_value
+        metadata["Rating"] = [
+            {
+                "image": "cinemanl://image.rating",
+                "type": "audience",
+                "value": rating_value,
+            }
+        ]
+
+    # Include images if enabled and available
+    # Per TMDB example: images are embedded directly in metadata response
+    if VPRO_RETURN_IMAGES and entry.images:
+        thumb_url = None
+        art_url = None
+
+        # Find poster (PROMO_PORTRAIT) and backdrop (PICTURE)
+        for img in entry.images:
+            img_type = img.get("type", "")
+            if img_type == "PROMO_PORTRAIT" and not thumb_url:
+                thumb_url = img.get("url")
+            elif img_type == "PICTURE" and not art_url:
+                art_url = img.get("url")
+
+        # Set thumb and art fields
+        if thumb_url:
+            metadata["thumb"] = thumb_url
+        if art_url:
+            metadata["art"] = art_url
+
+        # Build Image array with all images (per TMDB example)
+        plex_images = []
+        for img in entry.images:
+            plex_images.append({
+                "type": _map_vpro_image_type(img.get("type", "PICTURE")),
+                "url": img.get("url"),
+                "alt": entry.title,
+            })
+        if plex_images:
+            metadata["Image"] = plex_images
 
     # Build external GUIDs
     guids = []
@@ -345,10 +391,17 @@ def _build_empty_response(identifier: str) -> dict:
 
 
 def _map_vpro_image_type(vpro_type: str) -> str:
-    """Map VPRO image type to Plex type."""
+    """Map VPRO image type to Plex image type.
+
+    Plex expects specific type values:
+    - coverPoster: Primary poster artwork
+    - background: Backdrop/hero images
+    - clearLogo: Logo artwork
+    - backgroundSquare: Square-aspect backdrop
+    """
     if vpro_type == "PROMO_PORTRAIT":
-        return "poster"
-    return "art"  # backdrop/fanart for PICTURE, PROMO_LANDSCAPE, etc.
+        return "coverPoster"
+    return "background"  # backdrop/fanart for PICTURE, PROMO_LANDSCAPE, etc.
 
 
 def _build_images_response(rating_key: str, identifier: str) -> dict:
@@ -367,11 +420,12 @@ def _build_images_response(rating_key: str, identifier: str) -> dict:
         return _build_media_container(identifier, item_key="Image")
 
     # Build Plex image list
+    # Plex expects: type, url, alt (per TMDB example provider)
     plex_images = [
         {
             "type": _map_vpro_image_type(img.get("type", "PICTURE")),
             "url": img.get("url"),
-            "ratingKey": f"{rating_key}-img-{i}",
+            "alt": cached.title or img.get("title", ""),
         }
         for i, img in enumerate(cached.images)
     ]
@@ -933,6 +987,15 @@ def provider_root():
 
     See: https://forums.plex.tv/t/announcement-custom-metadata-providers/934384
     """
+    # Build feature list - only declare images feature if VPRO_RETURN_IMAGES is enabled
+    # When images feature is not declared, Plex will use secondary agents for images
+    features = [
+        {"type": "metadata", "key": "/library/metadata"},
+        {"type": "match", "key": "/library/metadata/matches"},
+    ]
+    if VPRO_RETURN_IMAGES:
+        features.append({"type": "images", "key": "/library/metadata"})
+
     return jsonify({
         "MediaProvider": {
             "identifier": PROVIDER_IDENTIFIER,
@@ -941,10 +1004,7 @@ def provider_root():
             "Types": [
                 {"type": 1, "Scheme": [{"scheme": PROVIDER_IDENTIFIER}]}
             ],
-            "Feature": [
-                {"type": "metadata", "key": "/library/metadata"},
-                {"type": "match", "key": "/library/metadata/matches"}
-            ],
+            "Feature": features,
             # Source array declares additional providers to run alongside this agent.
             # This enables Local Media Assets to scan for external subtitle files,
             # local artwork (poster.jpg, fanart.jpg), and embedded metadata.

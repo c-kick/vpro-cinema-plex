@@ -65,7 +65,7 @@ class CacheStatus(str, Enum):
 
 PROVIDER_IDENTIFIER: Final = "tv.plex.agents.custom.vpro.cinema"
 PROVIDER_TITLE: Final = "VPRO Cinema (Dutch Summaries)"
-PROVIDER_VERSION: Final = "4.0.3"  # Add JSON error handlers for stale/missing endpoints
+PROVIDER_VERSION: Final = "4.1.0"  # Improved poster scraping and image handling
 
 
 # =============================================================================
