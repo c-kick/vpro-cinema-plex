@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-VPRO Cinema Plex Metadata Provider v4.1.0
+VPRO Cinema Plex Metadata Provider v4.1.1
 
 A custom Plex metadata provider that fetches Dutch film descriptions
 from VPRO Cinema.
@@ -518,6 +518,26 @@ def handle_metadata_request(req: MetadataRequest) -> dict:
         return _build_empty_response(req.identifier)
 
 
+def _build_tmdb_images(details: dict, title: str) -> list[dict]:
+    """Build image list from TMDB movie details."""
+    images = []
+    poster_path = details.get("poster_path")
+    backdrop_path = details.get("backdrop_path")
+    if poster_path:
+        images.append({
+            "type": "PROMO_PORTRAIT",
+            "url": f"https://image.tmdb.org/t/p/original{poster_path}",
+            "title": f"{title} poster",
+        })
+    if backdrop_path:
+        images.append({
+            "type": "PICTURE",
+            "url": f"https://image.tmdb.org/t/p/original{backdrop_path}",
+            "title": title,
+        })
+    return images
+
+
 def _try_tmdb_fallback(title: str, year: Optional[int], imdb_id: Optional[str]) -> Optional[CacheEntry]:
     """
     Try to get basic metadata from TMDB when VPRO search fails.
@@ -557,6 +577,8 @@ def _try_tmdb_fallback(title: str, year: Optional[int], imdb_id: Optional[str]) 
                     # Build a minimal cache entry with TMDB data
                     # Note: We don't include TMDB overview as summary - that's not
                     # VPRO content. We just provide basic metadata so Plex can add the movie.
+                    # Include TMDB poster/backdrop so movies not on Cinema.nl still get artwork
+                    tmdb_images = _build_tmdb_images(details, tmdb_title)
                     return CacheEntry(
                         title=tmdb_title,
                         year=tmdb_year,
@@ -567,6 +589,7 @@ def _try_tmdb_fallback(title: str, year: Optional[int], imdb_id: Optional[str]) 
                         media_type="film",
                         status=CacheStatus.FOUND.value,
                         lookup_method="tmdb_fallback",
+                        images=tmdb_images if tmdb_images else None,
                     )
 
         # No IMDB ID or not found - search by title+year
@@ -987,14 +1010,17 @@ def provider_root():
 
     See: https://forums.plex.tv/t/announcement-custom-metadata-providers/934384
     """
-    # Build feature list - only declare images feature if VPRO_RETURN_IMAGES is enabled
-    # When images feature is not declared, Plex will use secondary agents for images
+    # Feature list - intentionally NOT declaring "images" feature.
+    # VPRO images are embedded directly in the metadata response (thumb, art, Image
+    # array) when VPRO_RETURN_IMAGES=true and images are available. By not declaring
+    # the images feature, Plex will ALSO query secondary agents (Plex Movie) and
+    # Local Media Assets for images, providing fallback for movies not on Cinema.nl.
+    # If we declared "images", Plex would only use our /images endpoint, which
+    # returns empty for movies not in VPRO — breaking LMA poster.jpg and Plex Movie.
     features = [
         {"type": "metadata", "key": "/library/metadata"},
         {"type": "match", "key": "/library/metadata/matches"},
     ]
-    if VPRO_RETURN_IMAGES:
-        features.append({"type": "images", "key": "/library/metadata"})
 
     return jsonify({
         "MediaProvider": {
