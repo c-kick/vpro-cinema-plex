@@ -192,7 +192,7 @@ Examples:
         action="store_true",
         help="Skip TMDB alternate title lookup"
     )
-    parser.add_argument("--version", action="version", version="%(prog)s 4.0.0")
+    parser.add_argument("--version", action="version", version="%(prog)s 4.1.1")
 
     args = parser.parse_args()
 

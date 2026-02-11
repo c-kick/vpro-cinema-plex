@@ -130,7 +130,8 @@ def log_match_request(
 
         # Rotate if too large
         if MATCH_LOG_FILE.exists():
-            line_count = sum(1 for _ in open(MATCH_LOG_FILE, 'r', encoding='utf-8'))
+            with open(MATCH_LOG_FILE, 'r', encoding='utf-8') as count_f:
+                line_count = sum(1 for _ in count_f)
             if line_count >= MAX_MATCH_LOG_ENTRIES:
                 # Keep last half of entries
                 with open(MATCH_LOG_FILE, 'r', encoding='utf-8') as f:
@@ -427,7 +428,7 @@ def _build_images_response(rating_key: str, identifier: str) -> dict:
             "url": img.get("url"),
             "alt": cached.title or img.get("title", ""),
         }
-        for i, img in enumerate(cached.images)
+        for img in cached.images
     ]
 
     return _build_media_container(identifier, plex_images, item_key="Image")
