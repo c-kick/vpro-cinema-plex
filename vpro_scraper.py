@@ -466,11 +466,23 @@ class VPROPageScraper(SessionAwareComponent):
 
     def _extract_content_rating(self, page_text: str) -> Optional[str]:
         """Extract Kijkwijzer content rating."""
-        # Look for Kijkwijzer patterns (AL, 6, 9, 12, 14, 16, 18)
-        kijkwijzer_match = re.search(r'\b(AL|6|9|12|14|16|18)\+?(?:\s|$)', page_text)
-        if kijkwijzer_match:
-            rating = kijkwijzer_match.group(1)
-            return rating
+        # Look for Kijkwijzer patterns in context (e.g., "Kijkwijzer: 12", "leeftijd: 16+")
+        # First try context-aware patterns to avoid false positives from bare numbers
+        context_patterns = [
+            r'(?:kijkwijzer|leeftijd|geschikt\s+vanaf)[:\s]+(\d{1,2}\+?|AL)',
+            r'(?:vanaf|minimaal)\s+(\d{1,2})\s*(?:jaar|jr)',
+        ]
+        for pattern in context_patterns:
+            match = re.search(pattern, page_text, re.IGNORECASE)
+            if match:
+                rating = match.group(1).rstrip('+')
+                if rating in ('AL', '6', '9', '12', '14', '16', '18'):
+                    return rating
+
+        # Fallback: look for "AL" as standalone (unlikely to be a false positive)
+        if re.search(r'\bAL\b', page_text):
+            return "AL"
+
         return None
 
     def _extract_imdb(self, soup: BeautifulSoup) -> Optional[str]:
@@ -837,8 +849,7 @@ def search_cinema_fallback(
 
                 logger.debug(f"No match found for '{search_title}'")
 
-        # No matches found
-        _circuit_breaker.record_failure()
+        # No matches found - this is not a failure, just no results
         logger.info(f"Cinema.nl fallback: No match for '{title}'")
         return None
 
