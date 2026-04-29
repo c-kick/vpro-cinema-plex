@@ -190,7 +190,7 @@ class CinemaSearcher(SessionAwareComponent):
 
         except Exception as e:
             logger.warning(f"Cinema.nl search failed: {e}")
-            return []
+            return None  # None = network/HTTP error; [] = no results
 
     def _parse_search_cards(self, soup: BeautifulSoup,
                             target_year: Optional[int]) -> List[SearchCandidate]:
@@ -812,6 +812,14 @@ def search_cinema_fallback(
             for search_title in titles_to_try:
                 candidates = searcher.search(search_title, year)
 
+                # search() returns None on network/HTTP error, [] on no results.
+                # A network error means cinema.nl is unreachable — stop trying
+                # alternate titles and trip the circuit breaker.
+                if candidates is None:
+                    _circuit_breaker.record_failure()
+                    logger.warning("Cinema.nl search returned error — circuit breaker notified")
+                    return None
+
                 if not candidates:
                     continue
 
@@ -849,7 +857,7 @@ def search_cinema_fallback(
 
                 logger.debug(f"No match found for '{search_title}'")
 
-        # No matches found - this is not a failure, just no results
+        # No matches found — this is not a failure, just no results
         logger.info(f"Cinema.nl fallback: No match for '{title}'")
         return None
 
