@@ -638,38 +638,44 @@ class FileCache:
         Returns:
             Dict with cache stats
         """
+        # Take a snapshot under the lock, then do all I/O outside it.
+        # Holding the lock while stat-ing and JSON-parsing thousands of files
+        # would block every write() call for potentially several seconds.
         with self._lock:
-            total_size = 0
-            found_count = 0
-            not_found_count = 0
-            expired_count = 0
+            paths_snapshot = list(self._access_times.keys())
+            total_entries = len(self._access_times)
 
-            for path_str in list(self._access_times.keys()):
-                path = Path(path_str)
-                if path.exists():
-                    try:
-                        total_size += path.stat().st_size
-                        data = json.loads(path.read_text())
-                        entry = CacheEntry.from_dict(data)
+        total_size = 0
+        found_count = 0
+        not_found_count = 0
+        expired_count = 0
 
-                        if entry.is_expired():
-                            expired_count += 1
-                        elif entry.description:
-                            found_count += 1
-                        else:
-                            not_found_count += 1
-                    except (OSError, json.JSONDecodeError):
-                        pass
+        for path_str in paths_snapshot:
+            path = Path(path_str)
+            if path.exists():
+                try:
+                    total_size += path.stat().st_size
+                    data = json.loads(path.read_text())
+                    entry = CacheEntry.from_dict(data)
 
-            return {
-                "total_entries": len(self._access_times),
-                "found_entries": found_count,
-                "not_found_entries": not_found_count,
-                "expired_entries": expired_count,
-                "total_size_mb": round(total_size / 1024 / 1024, 2),
-                "max_entries": MAX_CACHE_ENTRIES,
-                "max_size_mb": MAX_CACHE_SIZE_MB,
-            }
+                    if entry.is_expired():
+                        expired_count += 1
+                    elif entry.description:
+                        found_count += 1
+                    else:
+                        not_found_count += 1
+                except (OSError, json.JSONDecodeError):
+                    pass
+
+        return {
+            "total_entries": total_entries,
+            "found_entries": found_count,
+            "not_found_entries": not_found_count,
+            "expired_entries": expired_count,
+            "total_size_mb": round(total_size / 1024 / 1024, 2),
+            "max_entries": MAX_CACHE_ENTRIES,
+            "max_size_mb": MAX_CACHE_SIZE_MB,
+        }
 
     def keys(self) -> List[str]:
         """
