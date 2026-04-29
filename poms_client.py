@@ -474,7 +474,9 @@ class POMSAPIClient(SessionAwareComponent):
                     pass
             elif rel_type == "CINEMA_AGERATING" and value and not content_rating:
                 # Kijkwijzer age rating (e.g., "_16" -> "16", "AL")
-                content_rating = str(value).lstrip('_')
+                raw = str(value).lstrip('_')
+                if raw in ('AL', '6', '9', '12', '14', '16', '18'):
+                    content_rating = raw
 
         genres = [
             g.get("displayName", "")
