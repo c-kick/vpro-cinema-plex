@@ -663,7 +663,7 @@ class FileCache:
 
                     if entry.is_expired():
                         expired_count += 1
-                    elif entry.description:
+                    elif entry.status == CacheStatus.FOUND.value:
                         found_count += 1
                     else:
                         not_found_count += 1
