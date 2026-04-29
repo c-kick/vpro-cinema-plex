@@ -487,6 +487,7 @@ class FileCache:
         self._maybe_evict()
 
         cache_path = self._get_cache_path(key)
+        temp_path = cache_path.with_suffix('.tmp')
 
         try:
             # Set timestamps
@@ -496,8 +497,6 @@ class FileCache:
                 entry.fetched_at = now
 
             # Write to temp file first
-            temp_path = cache_path.with_suffix('.tmp')
-
             with open(temp_path, 'w', encoding='utf-8') as f:
                 self._lock_file(f, exclusive=True)
                 try:
@@ -514,9 +513,10 @@ class FileCache:
 
             return True
 
-        except OSError as e:
+        except Exception as e:
             logger.warning(f"Cache write error for {key}: {e}")
-            # Clean up temp file if it exists
+            # Clean up temp file — broad catch ensures cleanup even if json.dump
+            # raises TypeError (non-serializable data) rather than OSError
             try:
                 temp_path.unlink(missing_ok=True)
             except OSError:
