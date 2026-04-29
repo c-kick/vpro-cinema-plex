@@ -548,30 +548,40 @@ class FileCache:
         Triggered before writes to ensure space is available.
         """
         with self._lock:
-            # Check entry count first (fast)
-            if len(self._access_times) < MAX_CACHE_ENTRIES:
-                # Also check total size
-                try:
-                    total_size = sum(
-                        Path(p).stat().st_size
-                        for p in self._access_times.keys()
-                        if Path(p).exists()
-                    )
-                    if total_size < MAX_CACHE_SIZE_MB * 1024 * 1024:
-                        return  # No eviction needed
-                except OSError:
+            entry_count = len(self._access_times)
+            access_snapshot = dict(self._access_times)
+
+        # Size check done outside the lock to avoid holding it during I/O.
+        if entry_count < MAX_CACHE_ENTRIES:
+            try:
+                total_size = sum(
+                    Path(p).stat().st_size
+                    for p in access_snapshot.keys()
+                    if Path(p).exists()
+                )
+                if total_size < MAX_CACHE_SIZE_MB * 1024 * 1024:
                     return
+            except OSError:
+                return
 
-            # Evict oldest 10% by access time
-            sorted_by_access = sorted(
-                self._access_times.items(),
-                key=lambda x: x[1]
-            )
-            to_evict = sorted_by_access[:max(1, len(sorted_by_access) // 10)]
+        # Determine which entries to evict (oldest 10% by access time).
+        sorted_by_access = sorted(access_snapshot.items(), key=lambda x: x[1])
+        to_evict = sorted_by_access[:max(1, len(sorted_by_access) // 10)]
 
+        # Remove from tracking inside lock, then delete files outside.
+        # Calling _delete_file() while holding self._lock deadlocks because
+        # _delete_file() also acquires self._lock (threading.Lock is not reentrant).
+        with self._lock:
             for path_str, _ in to_evict:
-                self._delete_file(Path(path_str))
+                self._access_times.pop(path_str, None)
 
+        for path_str, _ in to_evict:
+            try:
+                Path(path_str).unlink(missing_ok=True)
+            except OSError:
+                pass
+
+        if to_evict:
             logger.info(f"Evicted {len(to_evict)} cache entries")
 
     def delete(self, key: str) -> bool:
