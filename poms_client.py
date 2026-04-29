@@ -31,6 +31,7 @@ from models import VPROFilm
 from text_utils import (
     sanitize_description,
     is_valid_description,
+    normalize_cinema_url,
     titles_match,
     title_similarity,
     build_unique_list,
@@ -515,7 +516,7 @@ class POMSAPIClient(SessionAwareComponent):
         # so we prefer images from cinema.nl scraping (images.vpro.nl URLs work)
         scrape_url = None
         if url and 'cinema.nl' in url:
-            scrape_url = url
+            scrape_url = normalize_cinema_url(url)
         elif url and 'vprogids.nl' in url:
             # Convert vprogids.nl URL to cinema.nl URL
             # vprogids.nl: https://www.vprogids.nl/cinema/films/film~16092390~the-penguin-lessons~.html
@@ -524,7 +525,9 @@ class POMSAPIClient(SessionAwareComponent):
             if match:
                 vpro_id_from_url = match.group(1)
                 slug = match.group(2)
-                scrape_url = f"https://www.cinema.nl/db/{vpro_id_from_url}-{slug}"
+                scrape_url = normalize_cinema_url(
+                    f"https://www.cinema.nl/db/{vpro_id_from_url}-{slug}"
+                )
                 logger.debug(f"POMS: Converted vprogids.nl URL to cinema.nl: {scrape_url}")
 
         if scrape_url:

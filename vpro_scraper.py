@@ -31,6 +31,7 @@ from text_utils import (
     sanitize_description,
     is_valid_description,
     extract_year_from_text,
+    normalize_cinema_url,
     titles_match,
     title_similarity,
 )
@@ -319,6 +320,7 @@ class VPROPageScraper(SessionAwareComponent):
             VPROFilm if scraping succeeded, None otherwise
         """
         try:
+            url = normalize_cinema_url(url)
             response = self.session.get(url)
             response.raise_for_status()
 

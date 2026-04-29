@@ -88,6 +88,28 @@ def normalize_for_comparison(text: str) -> str:
     return text
 
 
+def strip_diacritics(text: str) -> str:
+    """NFD decomposition then strip combining marks (café -> cafe)."""
+    return ''.join(
+        c for c in unicodedata.normalize('NFD', text)
+        if unicodedata.category(c) != 'Mn'
+    )
+
+
+def normalize_cinema_url(url: str) -> str:
+    """
+    Strip diacritics from a cinema.nl URL slug so requests doesn't
+    percent-encode non-ASCII characters (which cinema.nl 404s on).
+
+    /db/14767643-tár  ->  /db/14767643-tar
+    """
+    from urllib.parse import urlparse, urlunparse
+
+    parsed = urlparse(url)
+    normalized_path = strip_diacritics(parsed.path)
+    return urlunparse(parsed._replace(path=normalized_path))
+
+
 def normalize_for_cache_key(text: str, max_length: int = MAX_TITLE_LENGTH) -> str:
     """
     Normalize text for use in cache keys/filenames.
