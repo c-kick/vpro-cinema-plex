@@ -1103,6 +1103,9 @@ def match_metadata():
 @app.route('/movies/library/metadata/<rating_key>/images', methods=['GET'])
 def get_images(rating_key: str):
     """Return VPRO images if enabled, otherwise empty."""
+    if not validate_rating_key(rating_key):
+        metrics.inc("invalid_rating_keys")
+        return jsonify(_build_media_container(PROVIDER_IDENTIFIER, item_key="Image"))
     return jsonify(_build_images_response(rating_key, PROVIDER_IDENTIFIER))
 
 
