@@ -39,6 +39,7 @@ import os
 import re
 import json
 import logging
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -88,6 +89,7 @@ cache = FileCache(CACHE_DIR)
 # Match request log for troubleshooting
 MATCH_LOG_FILE = Path(CACHE_DIR) / "match_requests.jsonl"
 MAX_MATCH_LOG_ENTRIES = 1000  # Rotate after this many entries
+_match_log_lock = threading.Lock()
 
 # Flask app
 app = Flask(__name__)
@@ -125,23 +127,21 @@ def log_match_request(
     }
 
     try:
-        # Ensure directory exists
         MATCH_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
 
-        # Rotate if too large
-        if MATCH_LOG_FILE.exists():
-            with open(MATCH_LOG_FILE, 'r', encoding='utf-8') as count_f:
-                line_count = sum(1 for _ in count_f)
-            if line_count >= MAX_MATCH_LOG_ENTRIES:
-                # Keep last half of entries
+        with _match_log_lock:
+            # Read, rotate, and append inside a single lock window to prevent
+            # two concurrent requests from both deciding to truncate the file
+            # and writing interleaved or corrupted output.
+            if MATCH_LOG_FILE.exists():
                 with open(MATCH_LOG_FILE, 'r', encoding='utf-8') as f:
                     lines = f.readlines()
-                with open(MATCH_LOG_FILE, 'w', encoding='utf-8') as f:
-                    f.writelines(lines[len(lines) // 2:])
+                if len(lines) >= MAX_MATCH_LOG_ENTRIES:
+                    with open(MATCH_LOG_FILE, 'w', encoding='utf-8') as f:
+                        f.writelines(lines[len(lines) // 2:])
 
-        # Append new entry
-        with open(MATCH_LOG_FILE, 'a', encoding='utf-8') as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+            with open(MATCH_LOG_FILE, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + '\n')
 
     except Exception as e:
         logger.warning(f"Failed to log match request: {e}")
