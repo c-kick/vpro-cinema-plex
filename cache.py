@@ -366,15 +366,18 @@ class FileCache:
 
         logger.debug(f"Cache fallback search: prefix='{title_year_prefix}', type='{type_suffix}'")
 
-        # Search all shards for matching files
+        # Search all shards for matching files.
+        # Iterate shard directories explicitly rather than using glob("**/*.json")
+        # to avoid a full recursive walk that would stat every cached file.
         try:
-            for cache_file in self._cache_dir.glob(f"**/*.json"):
-                if not cache_file.parent.name or len(cache_file.parent.name) != 2:
+            for shard in self._cache_dir.iterdir():
+                if not shard.is_dir() or len(shard.name) != 2:
                     continue
-                filename = cache_file.stem
-                if filename.startswith(title_year_prefix) and f"-{type_suffix}_" in filename:
-                    logger.info(f"Cache fallback HIT: {key} -> {filename}")
-                    return cache_file
+                for cache_file in shard.glob("*.json"):
+                    filename = cache_file.stem
+                    if filename.startswith(title_year_prefix) and f"-{type_suffix}_" in filename:
+                        logger.info(f"Cache fallback HIT: {key} -> {filename}")
+                        return cache_file
         except OSError as e:
             logger.warning(f"Cache fallback error: {e}")
 
